@@ -30,6 +30,7 @@ from experiments import (
     exp11_stopping_law,
     exp12_full_bank_confusion,
     exp13_coverage,
+    exp14_next_channel_prediction,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -50,6 +51,7 @@ EXPERIMENTS = {
     "exp11": exp11_stopping_law,
     "exp12": exp12_full_bank_confusion,
     "exp13": exp13_coverage,
+    "exp14": exp14_next_channel_prediction,
 }
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
@@ -126,6 +128,11 @@ def _headline(name: str, r: dict) -> dict:
             return {"n_episodes": r["n_episodes"],
                     **{g: {"acc": a["accuracy"], "hard_false_id": a["hard_false_id_rate"]}
                        for g, a in r["aggregate_by_type"].items()}}
+        if name == "exp14":
+            per = r["operating_point"]
+            return {g: {"proposed_top1": d["proposed_steady"],
+                        "id_only_top1": d["id_only_steady"]}
+                    for g, d in per.items() if d["group"] == "new_algorithm"}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}

@@ -41,7 +41,6 @@ class Expert(abc.ABC):
 # ---- merged from fhew/experts/hypothesis.py ----
 import abc
 import math
-from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -290,7 +289,19 @@ class ContextMixingHypothesis(_PredictorHypothesis):
     context, and the mixture weights them by recent predictive log-loss
     (exponential weights). It adapts in-context across the whole adversary
     library with no per-sequence training, standing in for the journal's
-    zero-shot neural expert without a deep-learning dependency.
+    zero-shot neural expert without a deep-learning dependency. This is the
+    expert that lets the system **predict a generator it has no dedicated expert
+    for**: a variable-order rule (e.g. ``c_t = c_{t-1} + c_{t-2}``) is recovered
+    in-context even though no bank hypothesis targets it.
+
+    **Gap-robustness.** A context is only ever formed from a *contiguous run of
+    clean single-detection slots* ending at the slot before the one being
+    predicted. A missed hop or a false-alarm slot (which cannot be trusted as a
+    channel) breaks the run, so the predictor never learns or predicts from a
+    context that straddles a gap -- it falls back to lower orders until a clean
+    run rebuilds. This keeps the order-``k`` tables uncorrupted under a lossy
+    sensor, which is what makes it usable for exact deterministic rules through
+    missed detections.
     """
 
     def __init__(self, label: str, channels: ChannelSet, max_order: int = 3,
@@ -304,13 +315,17 @@ class ContextMixingHypothesis(_PredictorHypothesis):
         K = self.max_order
         self.weights = np.full(K + 1, 1.0 / (K + 1))
         self.tables = [dict() for _ in range(K + 1)]
-        self.context = deque(maxlen=K)
+        # the current contiguous run of clean channels (most recent last); a gap
+        # or false-alarm slot clears it so no context ever straddles a gap.
+        self.run: list[int] = []
 
-    def _ctx(self, order: int) -> tuple:
+    def _ctx(self, order: int) -> tuple | None:
+        """Context for ``order`` from the contiguous clean run, or None if short."""
         if order == 0:
             return ()
-        ctx = tuple(self.context)
-        return ctx[-order:] if len(ctx) >= order else None
+        if len(self.run) >= order:
+            return tuple(self.run[-order:])
+        return None
 
     def _order_pred(self, order: int) -> np.ndarray:
         key = self._ctx(order)
@@ -320,13 +335,26 @@ class ContextMixingHypothesis(_PredictorHypothesis):
         sm = counts + self.laplace
         return sm / sm.sum()
 
+    def observe_clean(self, channel: int | None) -> None:
+        if channel is None:
+            # a missed or false-alarm slot: the next channel cannot be predicted
+            # from a contiguous context, so break the run.
+            self.run = []
+        else:
+            self._ingest(int(channel))
+            self.run.append(int(channel))
+            if len(self.run) > self.max_order:
+                self.run.pop(0)
+        self.prior = self._predict_next_dist()
+        self._last_predict = self.prior.copy()
+
     def _ingest(self, channel: int) -> None:
-        # update expert weights by each order's loss predicting `channel`
+        # `self.run` holds the contiguous clean channels immediately *before* this
+        # slot, so every (context -> channel) pair recorded here is genuine.
         preds = [self._order_pred(o) for o in range(self.max_order + 1)]
         losses = np.array([-math.log(max(float(p[channel]), 1e-12)) for p in preds])
         self.weights = self.weights * np.exp(-self.eta * losses)
         self.weights /= self.weights.sum()
-        # update count tables context -> channel (context is pre-append)
         for o in range(self.max_order + 1):
             key = self._ctx(o)
             if key is None:
@@ -335,7 +363,6 @@ class ContextMixingHypothesis(_PredictorHypothesis):
             if key not in tab:
                 tab[key] = np.zeros(self.M)
             tab[key][channel] += 1.0
-        self.context.append(channel)
 
     def _predict_next_dist(self) -> np.ndarray:
         mix = np.zeros(self.M)
@@ -1166,6 +1193,142 @@ class HypothesisBank(Expert):
             return None
         return (UNKNOWN_LABEL if self.declared_index == H0_INDEX
                 else self.labels[self.declared_index])
+
+    @staticmethod
+    def _clean_channel(obs: Observation) -> int | None:
+        if len(obs.detections) == 1:
+            return obs.detections[0].channel
+        return None
+
+# ---- the Fixed-Share expert mixture: the next-channel predictor (thesis §4.2) ----
+
+
+class FixedShareMixture(Expert):
+    r"""Weights every expert by its *recent* next-channel predictive skill.
+
+    This is the thesis Section 4.2 combiner, and the object the system uses to
+    **predict the next channel**. It differs from :class:`HypothesisBank` in what
+    it optimises: the bank accumulates likelihood to *identify* a generator and
+    can only predict well once an in-bank hypothesis wins; the mixture instead
+    tracks whichever expert is predicting best *right now*, so it keeps producing
+    a sharp next-hop distribution even when no identification expert matches ---
+    the universal (context-mixing) expert then carries the prediction.
+
+    Weights update multiplicatively on each expert's per-slot sensor-aware
+    predictive log-likelihood ``\ell_t(i)`` (information-parity safe: it is the
+    log-likelihood of the *observation*, never the hidden channel), followed by a
+    Fixed-Share floor so a newly-relevant expert recovers in a logarithmic number
+    of steps after a regime switch:
+
+        w_{t+1}(i) \propto w_t(i) \exp(\eta\,\ell_t(i)),
+        w_{t+1} \leftarrow (1-\alpha)\,w_{t+1} + \alpha/N.
+
+    The per-slot additive constant that the reduced emission drops is identical
+    across experts, so it cancels in the weight normalisation; the mixture is
+    therefore invariant to it.
+    """
+
+    label = "mixture"
+
+    def __init__(
+        self,
+        channels: ChannelSet,
+        experts: list[Hypothesis],
+        *,
+        emission: EmissionModel | None = None,
+        sensor: SensorModel | None = None,
+        eta: float = 1.0,
+        alpha: float = 0.02,
+        labels: list[str] | None = None,
+    ):
+        if not experts:
+            raise ValueError("FixedShareMixture needs at least one expert")
+        if emission is None:
+            if sensor is None:
+                raise ValueError("pass either an emission model or a sensor")
+            emission = SensorAwareEmission(sensor)
+        if not 0.0 <= alpha < 1.0:
+            raise ValueError("alpha (share floor) must be in [0, 1)")
+        if eta <= 0.0:
+            raise ValueError("eta must be positive")
+        self.channels = channels
+        self.M = channels.size
+        self.emission = emission
+        self.experts = list(experts)
+        self.n = len(self.experts)
+        self.eta = float(eta)
+        self.alpha = float(alpha)
+        self.labels = list(labels) if labels is not None else [
+            getattr(h, "label", f"expert{i}") for i, h in enumerate(self.experts)
+        ]
+        self.reset()
+
+    # ------------------------------------------------------------------ Expert
+    def reset(self) -> None:
+        for h in self.experts:
+            h.reset()
+        self.log_w = np.full(self.n, -np.log(self.n))
+        self.t = 0
+        self._next_hops = np.tile(self.channels.uniform(), (self.n, 1))
+        self._last_predict = self.channels.uniform()
+
+    def update(self, obs: Observation) -> float:
+        log_e = self.emission.log_emission(obs)
+        clean = self._clean_channel(obs)
+        lls = np.empty(self.n, dtype=np.float64)
+        for k, h in enumerate(self.experts):
+            res = h.step(log_e)
+            lls[k] = res.loglik
+            observe_clean = getattr(h, "observe_clean", None)
+            if observe_clean is not None:
+                observe_clean(clean)
+            # read the next-hop AFTER observe_clean so online predictors surface
+            # the genuine P(s_{t+1} | o_{1:t}) (same convention as HypothesisBank).
+            self._next_hops[k] = h.predict_next()
+        # mixture predictive log-likelihood for this slot (before the weight step)
+        mix_loglik = float(logsumexp(self.log_w + lls))
+        # Fixed-Share weight update (multiplicative weights + share floor).
+        a = self.log_w + self.eta * lls
+        a -= logsumexp(a)
+        w = np.exp(a)
+        w = (1.0 - self.alpha) * w + self.alpha / self.n
+        self.log_w = np.log(w)
+        self.t += 1
+        self._last_predict = self._mix_next_hop()
+        return mix_loglik
+
+    def _mix_next_hop(self) -> np.ndarray:
+        w = np.exp(self.log_w)
+        p = w @ self._next_hops
+        s = p.sum()
+        return p / s if s > 0 else self.channels.uniform()
+
+    def predict(self) -> np.ndarray:
+        """The posterior-over-experts weighted next-channel distribution."""
+        return self._last_predict.copy()
+
+    # ------------------------------------------------------------- prediction API
+    def predict_topk(self, k: int = 1) -> list[int]:
+        """The ``k`` most probable next channels, most likely first."""
+        p = self.predict()
+        return [int(c) for c in np.argsort(p)[::-1][:k]]
+
+    def predict_argmax(self) -> int:
+        return int(np.argmax(self.predict()))
+
+    def weights(self) -> np.ndarray:
+        return np.exp(self.log_w)
+
+    def dominant_label(self) -> str:
+        """Label of the expert currently carrying the most weight (diagnostic)."""
+        return self.labels[int(np.argmax(self.log_w))]
+
+    def predictability(self) -> float:
+        """kappa = 1 - H(predict)/log M, in [0, 1]: how sharp the prediction is."""
+        p = self.predict()
+        nz = p[p > 0]
+        H = float(-(nz * np.log(nz)).sum())
+        return float(1.0 - H / np.log(self.M))
 
     @staticmethod
     def _clean_channel(obs: Observation) -> int | None:

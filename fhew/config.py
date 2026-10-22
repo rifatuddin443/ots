@@ -103,6 +103,32 @@ def full_bank_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
     ]
 
 
+def prediction_expert_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
+                            weak_keyspace=256, lcg_seed_max=1024,
+                            max_order: int = 4) -> list[HypothesisSpec]:
+    """Experts for the Fixed-Share **next-channel predictor** (thesis §4.2).
+
+    The identification experts (one per known family) plus a *zero-shot universal
+    predictor* and the model-free fallbacks, so the next-channel prediction keeps
+    working on a generator the bank has no dedicated expert for ("if a new algo
+    is used, still predict the next channel"). The universal `context_mixing`
+    expert is a variable-order Markov mixture: it recovers in-context regularity
+    (including higher-order rules a first-order Markov expert misses), `phase_space`
+    carries unseen chaotic dynamics, and `barrage` is the uniform floor for the
+    genuinely unpredictable (keyed CSPRNG).
+    """
+    specs = identification_bank_specs(
+        n_channels, lfsr_lengths=lfsr_lengths, weak_keyspace=weak_keyspace,
+        lcg_seed_max=lcg_seed_max)
+    specs += [
+        HypothesisSpec("context_mixing", "markov", "context_mixing",
+                       options={"max_order": max_order}),
+        HypothesisSpec("phase_space", "logistic", "phase_space"),
+        HypothesisSpec("barrage", "none", "barrage"),
+    ]
+    return specs
+
+
 #: which generator family each expert label targets (for coverage scoring)
 EXPERT_TARGET_FAMILY = {
     "lfsr": "lfsr", "bm": "lfsr", "state_filtered_bm": "lfsr",
@@ -121,7 +147,14 @@ GENERATOR_TARGET_FAMILY = {
     "weak_seed": "weak_seed", "markov": "markov",
     "logistic": "chaos", "tent": "chaos", "henon": "chaos",
     "csprng": "unknown",
+    # "new algorithm" families: no dedicated expert, so identification routes to
+    # unknown; they exist to test next-channel *prediction*, not identification.
+    "lagged_fib": "unknown", "quadratic_cg": "unknown", "sine_map": "unknown",
 }
+
+#: "new algorithm" generators held out of every bank, used by the prediction
+#: benchmark to show the universal predictor generalises beyond the bank.
+NEW_ALGORITHM_GENERATORS = ("lagged_fib", "quadratic_cg", "sine_map")
 
 
 def specs_from_list(items: list[dict]) -> list[HypothesisSpec]:

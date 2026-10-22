@@ -9,6 +9,7 @@ Sections:
   6. demo dashboard trace recorder
 """
 
+import math
 import numpy as np
 import pytest
 
@@ -542,3 +543,130 @@ def test_dashboard_standalone_inlines_every_local_asset(tmp_path):
     assert 'src="' not in out.replace('src="https://', "")
     assert 'href="assets/' not in out
     assert "OTS.views.register" in out and "OTS.boot()" in out
+# ============================================ 7. next-channel prediction (exp14)
+from fhew.config import (  # noqa: E402
+    NEW_ALGORITHM_GENERATORS,
+    prediction_expert_specs,
+)
+from fhew.experts import FixedShareMixture, HypothesisSpec  # noqa: E402
+from fhew.predict import ChannelPredictor, PredictionScore, predict_over_episode  # noqa: E402
+
+
+def _universal_specs(max_order=3):
+    """A light predictor expert set (universal + markov + floor) for fast tests."""
+    return [
+        HypothesisSpec("context_mixing", "markov", "context_mixing",
+                       options={"max_order": max_order}),
+        HypothesisSpec("markov", "markov", "markov", options={"alpha": 1.0}),
+        HypothesisSpec("barrage", "none", "barrage"),
+    ]
+
+
+def test_new_algorithm_generators_registered_and_in_range():
+    for name in NEW_ALGORITHM_GENERATORS:
+        assert name in registered_names()
+        seq = make_generator(name, M, rng=np.random.default_rng(0)).sequence(40)
+        assert seq.min() >= 0 and seq.max() < M and len(seq) == 40
+
+
+def test_quadratic_cg_is_full_cycle():
+    # defaults give a period-M permutation (every channel once), not a fixed point
+    seq = make_generator("quadratic_cg", M, seed=3).sequence(M)
+    assert sorted(seq.tolist()) == list(range(M))
+
+
+def test_fixed_share_mixture_is_a_distribution():
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.9, 0.02)
+    experts = [build_hypothesis(s, ch, 60) for s in _universal_specs()]
+    mix = FixedShareMixture(ch, experts, sensor=sensor, labels=["cm", "markov", "barrage"])
+    rng = np.random.default_rng(0)
+    ep = make_episode("markov", ch, sensor, 40, rng, gen_params={"alpha": 0.2})
+    for o in ep.observations:
+        ll = mix.update(o)
+        assert isinstance(ll, float)
+    assert abs(mix.predict().sum() - 1.0) < 1e-9
+    assert abs(mix.weights().sum() - 1.0) < 1e-9
+    assert mix.dominant_label() in ("cm", "markov", "barrage")
+    assert 0.0 <= mix.predictability() <= 1.0
+
+
+def test_channel_predictor_api():
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.95, 0.01)
+    pred = ChannelPredictor(ch, sensor, specs=_universal_specs(), horizon=80)
+    rng = np.random.default_rng(1)
+    ep = make_episode("lfsr", ch, sensor, 50, rng, gen_params={"length": 7})
+    for o in ep.observations:
+        pred.observe(o)
+    p = pred.predict_next()
+    assert abs(p.sum() - 1.0) < 1e-9 and len(p) == M
+    assert 0 <= pred.predict_top1() < M
+    topk = pred.predict_topk(3)
+    assert len(topk) == 3 and len(set(topk)) == 3 and all(0 <= c < M for c in topk)
+    pred.reset()
+    assert pred.mixture.t == 0
+
+
+def test_predicts_new_algorithm_the_bank_cannot():
+    # lagged_fib (c_t = c_{t-1}+c_{t-2}) has no dedicated expert and is NOT
+    # first-order Markov, so the universal variable-order predictor is the only
+    # thing that can predict it. Under a clean sensor it should predict it nearly
+    # perfectly, and far better than an order-1-Markov-only ("bank") predictor.
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(1.0, 0.0)
+    universal = ChannelPredictor(ch, sensor, specs=_universal_specs(max_order=3), horizon=200)
+    markov_only = ChannelPredictor(
+        ch, sensor, specs=[HypothesisSpec("markov", "markov", "markov")], horizon=200)
+    prop, base = [], []
+    for s in range(6):
+        rng = np.random.default_rng(500 + s)
+        g = make_generator("lagged_fib", M, rng=rng)
+        true = g.sequence(160)
+        obs = sensor.observe(true, ch, rng)
+        prop.append(predict_over_episode(universal, true, obs).top1_steady)
+        base.append(predict_over_episode(markov_only, true, obs).top1_steady)
+    prop_top1, base_top1 = float(np.mean(prop)), float(np.mean(base))
+    assert prop_top1 > 0.9                     # predicts the new algorithm
+    assert prop_top1 > base_top1 + 0.25        # and the limited bank cannot
+
+
+def test_context_mixing_gap_aware_does_not_corrupt_across_gaps():
+    # On a clean deterministic cycle the predictor locks to top-1 = 1.0; dropping
+    # some detections must not make it predict a wrong channel from a stale
+    # context — accuracy on the predictable (post-gap-recovered) slots stays high.
+    ch = ChannelSet.of_size(M)
+    clean = SensorModel(1.0, 0.0)
+    pred = ChannelPredictor(ch, clean, specs=_universal_specs(max_order=2), horizon=120)
+    rng = np.random.default_rng(3)
+    g = make_generator("quadratic_cg", M, seed=1)
+    true = g.sequence(120)
+    sc = predict_over_episode(pred, true, clean.observe(true, ch, rng))
+    assert sc.top1_steady > 0.95
+
+
+def test_predict_over_episode_score_fields():
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.9, 0.02)
+    pred = ChannelPredictor(ch, sensor, specs=_universal_specs(), horizon=80)
+    rng = np.random.default_rng(2)
+    ep = make_episode("markov", ch, sensor, 60, rng, gen_params={"alpha": 0.2})
+    sc = predict_over_episode(pred, ep.true_channels, ep.observations)
+    assert isinstance(sc, PredictionScore)
+    assert 0.0 <= sc.top1 <= 1.0 and 0.0 <= sc.top3 <= 1.0
+    assert sc.top3 >= sc.top1 - 1e-9
+    assert abs(sc.uniform_logloss - math.log(M)) < 1e-9
+
+
+def test_csprng_is_unpredictable_by_the_universal_predictor():
+    # the boundary: a keyed CSPRNG must pin prediction at chance (top-1 ~ 1/M)
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.95, 0.01)
+    pred = ChannelPredictor(ch, sensor, specs=_universal_specs(), horizon=160)
+    tops = []
+    for s in range(4):
+        rng = np.random.default_rng(900 + s)
+        g = make_generator("csprng", M, rng=rng)
+        true = g.sequence(150)
+        tops.append(predict_over_episode(pred, true, sensor.observe(true, ch, rng)).top1)
+    assert float(np.mean(tops)) < 0.15   # no better than ~chance (1/16 = 0.0625)

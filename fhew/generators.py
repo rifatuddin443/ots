@@ -623,3 +623,135 @@ class FullStateLCGGenerator(Generator):
     def describe(self) -> dict:
         return {"name": self.name, "n_channels": self.n_channels,
                 "modulus": self.m, "mult": self.a, "incr": self.c}
+
+# ---- "new algorithm" generators: held OUT of every expert bank ----------------
+# These exist to test the *prediction* claim rather than the identification claim:
+# the system has no dedicated expert for any of them, so the only thing that can
+# predict their next channel is the zero-shot universal predictor inside the
+# Fixed-Share mixture. They are never added to a bank's hypothesis list; the
+# prediction benchmark (experiments/exp14) draws them as unseen adversaries.
+
+
+@register("lagged_fib")
+class LaggedFibonacciGenerator(Generator):
+    """Additive lagged generator ``c_t = (c_{t-1} + c_{t-k}) mod M``.
+
+    The flagship "new algorithm". With the default lag ``k = 2`` the next channel
+    is a deterministic function of the *last two* channels, so a first-order
+    Markov expert sees it as near-uniform (for a fixed ``c_{t-1}`` the output
+    still ranges over all ``c_{t-2}``) and cannot predict it. A variable-order
+    (context-mixing) predictor recovers the order-``k`` rule in-context, which is
+    exactly the capability the limited bank lacks. Deterministic and gap-robust:
+    once the predictor has the rule it rolls forward across missed detections.
+    """
+
+    def __init__(self, n_channels: int, lag: int, seed_state: tuple[int, ...]):
+        super().__init__(n_channels)
+        self.lag = int(lag)
+        if len(seed_state) != self.lag:
+            raise ValueError("seed_state length must equal lag")
+        self._seed = tuple(int(s) % n_channels for s in seed_state)
+        self.hist = list(self._seed)
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               lag: int = 2, seed_state: tuple[int, ...] | None = None):
+        rng = rng or np.random.default_rng()
+        if seed_state is None:
+            seed_state = tuple(int(rng.integers(0, n_channels)) for _ in range(int(lag)))
+            if all(s == 0 for s in seed_state):  # avoid the all-zero fixed point
+                seed_state = (1,) + seed_state[1:]
+        return cls(n_channels=n_channels, lag=int(lag), seed_state=seed_state)
+
+    def reset(self) -> None:
+        self.hist = list(self._seed)
+
+    def next_channel(self) -> int:
+        c = (self.hist[-1] + self.hist[-self.lag]) % self.n_channels
+        self.hist.append(c)
+        return c
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "lag": self.lag}
+
+
+@register("quadratic_cg")
+class QuadraticCongruentialGenerator(Generator):
+    """Nonlinear (quadratic) congruential generator ``x <- (a x^2 + b x + c) mod M``.
+
+    Channel is the full state, so it is a deterministic order-1 map the bank has
+    no algebraic expert for. It is predictable (a strong predictor learns the
+    16-entry transition table), demonstrating that an unseen *nonlinear* scheme
+    is still handled by the universal predictor.
+    """
+
+    def __init__(self, n_channels: int, a: int, b: int, c: int, seed: int):
+        super().__init__(n_channels)
+        self.a = int(a); self.b = int(b); self.c = int(c)
+        self._seed = int(seed) % n_channels
+        self.x = self._seed
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               a: int = 14, b: int = 15, c: int = 5, seed: int | None = None):
+        # Defaults give a full-period cycle at M=16 (every channel visited once),
+        # so the stream is a non-trivial deterministic permutation rather than a
+        # short attracting cycle.
+        rng = rng or np.random.default_rng()
+        if seed is None:
+            seed = int(rng.integers(0, n_channels))
+        return cls(n_channels=n_channels, a=a, b=b, c=c, seed=seed)
+
+    def reset(self) -> None:
+        self.x = self._seed
+
+    def next_channel(self) -> int:
+        self.x = (self.a * self.x * self.x + self.b * self.x + self.c) % self.n_channels
+        return self.x
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels,
+                "a": self.a, "b": self.b, "c": self.c}
+
+
+@register("sine_map")
+class SineMapGenerator(Generator):
+    """Chaotic sine map ``x <- r * sin(pi * x)`` quantised to channels.
+
+    A chaotic family deliberately *not* in the parametric-chaos-ID grid (which
+    knows only logistic/tent/Hénon), so there is no expert tuned to it. Its
+    next channel is predictable above chance only through the model-free
+    predictors (phase-space / context-mixing), showing the universal path
+    generalises to unseen chaotic dynamics too.
+    """
+
+    def __init__(self, n_channels: int, r: float, x0: float, burn_in: int = 64):
+        super().__init__(n_channels)
+        self.r = float(r)
+        self._x0 = float(x0)
+        self.burn_in = int(burn_in)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               r: float = 0.99, x0: float | None = None, burn_in: int = 64):
+        rng = rng or np.random.default_rng()
+        if x0 is None:
+            x0 = float(rng.uniform(0.05, 0.95))
+        return cls(n_channels=n_channels, r=r, x0=x0, burn_in=burn_in)
+
+    def reset(self) -> None:
+        import math as _m
+        x = self._x0
+        for _ in range(self.burn_in):
+            x = self.r * _m.sin(_m.pi * x)
+        self.x = x
+
+    def next_channel(self) -> int:
+        import math as _m
+        self.x = self.r * _m.sin(_m.pi * self.x)
+        u = min(max(self.x, 0.0), 1.0 - 1e-12)
+        return _chaos_channel(u, self.n_channels)
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "r": self.r}

@@ -28,12 +28,16 @@ only :class:`~fhew.sensor.Observation` objects and its own recce config.
 
 from fhew.channels import ChannelSet
 from fhew.sensor import Detection, Observation, SensorModel
+from fhew.predict import ChannelPredictor, PredictionScore, predict_over_episode
 
 __all__ = [
     "ChannelSet",
     "SensorModel",
     "Observation",
     "Detection",
+    "ChannelPredictor",
+    "PredictionScore",
+    "predict_over_episode",
     "__version__",
 ]
 

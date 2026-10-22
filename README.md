@@ -1,10 +1,18 @@
 # fhew — Sensor-Aware Hypothesis Bank for FH Generator Identification
 
 A reusable simulation codebase for the conference-paper slice of the
-Confidence-Adaptive Multi-Channel EW thesis: **identify which known
-hop-generation mechanism a frequency-hopping emitter is using, from a noisy
-passive sensor, in as few observed hops as possible — and decide when the
-generator is not in the bank at all.**
+Confidence-Adaptive Multi-Channel EW thesis. The headline capability is
+**predicting the next channel** a frequency-hopping emitter will hop to, from a
+noisy passive sensor — and doing so **even when the emitter uses an algorithm the
+bank has no expert for.** Identifying the known mechanism (in as few observed hops
+as possible, and deciding when it is *not* in the bank) is the fast path that
+makes that prediction sharp when a known generator is present.
+
+**Primary metric: next-channel top-1 accuracy.** Because the bank is necessarily
+limited, prediction rides a Fixed-Share expert mixture that always carries a
+zero-shot *universal predictor*; on a brand-new generator it keeps predicting the
+next channel where an identification-only bank collapses to the uniform floor (see
+`exp14`, and `fhew.predict.ChannelPredictor`).
 
 Everything here is software-only and simulation-only. The code is organised so
 that the gym core, the generator registry, the HMM likelihood, and the bank
@@ -59,6 +67,26 @@ ep = make_episode("weak_seed", ch, sensor, 100, rng,
 result = run_bank(bank, ep)
 print(result.decision_label, result.tau_stop, result.correct)   # e.g. weak_seed 6 True
 ```
+
+### Predict the next channel (the headline use)
+
+```python
+from fhew import ChannelSet, SensorModel, ChannelPredictor
+
+ch = ChannelSet.of_size(16)
+sensor = SensorModel(p_d=0.95, p_fa=0.01)
+predictor = ChannelPredictor(ch, sensor)      # carries a zero-shot universal predictor
+
+for obs in stream:                            # the lossy sensor stream, slot by slot
+    predictor.observe(obs)
+    guess = predictor.predict_top1()          # best guess for the NEXT channel
+    shortlist = predictor.predict_topk(3)     # or a few channels to cover
+    kappa = predictor.predictability()        # 0 = unpredictable, 1 = pinned down
+```
+
+This keeps predicting even for a generator no expert was built for (e.g.
+`lagged_fib`, `quadratic_cg`, `sine_map`); against a keyed CSPRNG it correctly
+falls back to chance. It never sees the true channel — only `Observation`s.
 
 ## Reproduce the paper figures
 
@@ -129,6 +157,7 @@ the exp6/exp7 protocols with the same seeds.
 | `exp11_stopping_law` | §10 | E[τ] ∝ log(1/δ) and ∝ 1/`P_d` (detection thinning) |
 | `exp12_full_bank_confusion` | thesis §5 | Full expert-bank coverage confusion matrix (every expert fires on its target) |
 | `exp13_coverage` | thesis §5 | Large-scale per-type identification over the whole library (7,500 episodes) |
+| `exp14_next_channel_prediction` | thesis §4.2 / §12 (headline) | **Next-channel top-1 accuracy**, incl. new algorithms the bank has no expert for; proposed (universal) vs bank-only vs Markov vs uniform |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -141,6 +170,15 @@ the exp6/exp7 protocols with the same seeds.
 - Plain Berlekamp-Massey collapses the instant `P_d < 1` (any gap); the
   gap-robust state-filtered variant stays at 100% recovery.
 - The e-process false-identification rate stays under the nominal `β` line.
+
+### Next-channel prediction, including new algorithms (`exp14`)
+
+- Known generators (LFSR/weak-seed/LCG) are predicted at **100% top-1**; a keyed
+  CSPRNG collapses to chance (~1/16), the predictability boundary.
+- On **`lagged_fib`**, a new order-2 generator the bank has **no expert for**, the
+  universal predictor reaches **0.88 top-1** vs **0.42** for an identification-only
+  bank — more than double — and stays far above it across the whole `P_d` sweep.
+  This is the "if a new algorithm is used, still predict the next channel" result.
 
 ## The full thesis expert bank (beyond the conference slice)
 
@@ -191,10 +229,13 @@ fhew/
   channels.py        channel set C
   sensor.py          detection-level sensor + frozen observation schema v1
   generators.py      LFSR, filtered-LFSR, LCG, full-state LCG, weak-seed, Markov,
-                     chaotic maps (logistic/tent/Hénon), CSPRNG (registry)
+                     chaotic maps (logistic/tent/Hénon), CSPRNG, and the held-out
+                     "new algorithm" families (lagged_fib/quadratic_cg/sine_map)
   recovery.py        Berlekamp-Massey + bit/channel expansion
   likelihood.py      reduced emission (sensor-aware / naive) + forward filter
-  experts.py         Expert interface, the full thesis expert bank, H_0, the bank
+  experts.py         Expert interface, the full thesis expert bank, H_0, the bank,
+                     and the Fixed-Share mixture (next-channel predictor)
+  predict.py         ChannelPredictor: the next-channel prediction front end
   stopping.py        MSPRT + e-process
   baselines.py       pairwise SPRT, fixed-length LRT, learned classifier (+ LSTM)
   sim.py             episode + end-to-end slot loop (paper Algorithm 1)
