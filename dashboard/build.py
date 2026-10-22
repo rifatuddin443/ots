@@ -2,7 +2,7 @@
 
 Usage:
     python -m dashboard.build                     # 3 engagements per emitter x sensor, 20-seed scoreboard
-    python -m dashboard.build --quick             # 1 engagement each, 4-seed scoreboard
+    python -m dashboard.build --quick             # 1 engagement each, 4-seed scoreboard and proofs
     python -m dashboard.build --standalone ots_demo.html   # also write a single self-contained page
     python -m dashboard.build --reuse --standalone ots_demo.html   # bundle the existing data.js only
 
@@ -15,10 +15,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import time
 from pathlib import Path
 
 from experiments import common as C
+from dashboard import proof as P
 from dashboard import traces as T
 
 HERE = Path(__file__).resolve().parent
@@ -27,7 +29,8 @@ INDEX_HTML = HERE / "index.html"
 DATA_TAG = '<script src="data.js"></script>'
 
 
-def build_data(n_traces: int, n_score_seeds: int, *, verbose: bool = True) -> dict:
+def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
+               verbose: bool = True) -> dict:
     t0 = time.time()
     traces = []
     for pr in T.PRESETS:
@@ -47,13 +50,18 @@ def build_data(n_traces: int, n_score_seeds: int, *, verbose: bool = True) -> di
                   f"baseline={row['base_acc']:.2f}")
 
     board = T.scoreboard(n_score_seeds, progress=progress)
+    if verbose:
+        print("  proof: textbook Berlekamp-Massey vs state-filtered, sensor-aware vs naive")
+    proof = {"bm_vs_filtered": P.bm_vs_filtered(n_proof_seeds),
+             "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
     return {
-        "version": 1,
+        "version": 2,
         "generated": dt.date.today().isoformat(),
         "M": T.M, "window": T.WINDOW, "delta": T.DELTA,
         "hypotheses": T.HYPOTHESES, "emitters": T.EMITTERS,
         "presets": T.PRESETS, "tour": T.TOUR,
-        "traces": traces, "scoreboard": board,
+        "search_sizes": T.search_sizes(engine),
+        "traces": traces, "scoreboard": board, "proof": proof,
         "build_seconds": round(time.time() - t0, 1),
     }
 
@@ -65,12 +73,26 @@ def to_js(data: dict) -> str:
 
 
 def write_standalone(js: str, path: Path) -> Path:
+    """Inline data.js and every local stylesheet/script so one file runs anywhere."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     if DATA_TAG not in html:
         raise RuntimeError(f"{INDEX_HTML} no longer loads data.js via {DATA_TAG!r}")
-    # json.dumps never emits '</script>' unescaped inside strings, but be safe.
-    inline = "<script>" + js.replace("</", "<\\/") + "</script>"
-    path.write_text(html.replace(DATA_TAG, inline), encoding="utf-8")
+
+    def script(body: str) -> str:
+        # keep '</script>' sequences inside the code from closing the tag early
+        return "<script>" + body.replace("</", "<\\/") + "</script>"
+
+    html = html.replace(DATA_TAG, script(js))
+
+    def inline_js(m: re.Match) -> str:
+        return script((HERE / m.group(1)).read_text(encoding="utf-8"))
+
+    def inline_css(m: re.Match) -> str:
+        return "<style>" + (HERE / m.group(1)).read_text(encoding="utf-8") + "</style>"
+
+    html = re.sub(r'<script src="(?!https?:)([^"]+)"></script>', inline_js, html)
+    html = re.sub(r'<link rel="stylesheet" href="(?!https?:)([^"]+)">', inline_css, html)
+    path.write_text(html, encoding="utf-8")
     return path
 
 
@@ -78,6 +100,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--traces", type=int, default=3, help="engagements per emitter x sensor preset")
     p.add_argument("--score-seeds", type=int, default=20, help="scoreboard seeds per emitter x preset")
+    p.add_argument("--proof-seeds", type=int, default=40, help="seeds per point in the ablation proofs")
     p.add_argument("--quick", action="store_true", help="1 engagement each, 4-seed scoreboard")
     p.add_argument("--standalone", type=Path, help="also write a single self-contained HTML page")
     p.add_argument("--reuse", action="store_true",
@@ -85,14 +108,14 @@ def main(argv=None):
     p.add_argument("-q", "--quiet", action="store_true")
     args = p.parse_args(argv)
     if args.quick:
-        args.traces, args.score_seeds = 1, 4
+        args.traces, args.score_seeds, args.proof_seeds = 1, 4, 4
     if args.reuse:
         if not args.standalone:
             p.error("--reuse only makes sense with --standalone")
         print(f"[dashboard] wrote {write_standalone(DATA_JS.read_text(encoding='utf-8'), args.standalone)}")
         return
 
-    data = build_data(args.traces, args.score_seeds, verbose=not args.quiet)
+    data = build_data(args.traces, args.score_seeds, args.proof_seeds, verbose=not args.quiet)
     js = to_js(data)
     DATA_JS.write_text(js, encoding="utf-8")
     n_ep = sum(r["n"] for r in data["scoreboard"]["rows"])

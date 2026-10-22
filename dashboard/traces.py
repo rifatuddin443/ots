@@ -33,7 +33,7 @@ from fhew.experts import (
 from fhew.generators import make_generator
 from fhew.likelihood import SensorAwareEmission
 from fhew.sensor import SensorModel
-from fhew.sim import Episode, run_bank, run_sprt
+from fhew.sim import Episode, decide_outcome, run_sprt
 
 M = C.DEFAULT_M
 WINDOW = C.DEFAULT_WINDOW
@@ -289,17 +289,67 @@ def _rate(xs) -> float | None:
     return round(float(np.mean(xs)), 4) if xs else None
 
 
+def score_episode(bank: HypothesisBank, ep: Episode) -> tuple:
+    """One full-window run: the ``run_bank`` decision plus next-hop hits per slot.
+
+    The decision is formed exactly as :func:`fhew.sim.run_bank` forms it (the
+    first declaration, else the MAP at the window end); running past the
+    declaration only adds the forecasts made after the lock.
+    """
+    bank.reset()
+    true = ep.true_channels
+    hits = []
+    for t, o in enumerate(ep.observations):
+        bank.update(o)
+        if t < ep.window - 1:
+            hits.append(int(np.argmax(bank.predict())) == int(true[t + 1]))
+    if bank.declared:
+        label, tau = bank.declared_identity(), int(bank.tau_stop)
+    else:
+        top = int(np.argmax(bank.posterior()))
+        label, tau = ("unknown" if top == 0 else bank.labels[top]), ep.window
+    res = decide_outcome(bank.label, ep, label, bank.declared, tau)
+    # forecasts made after the slot that declared (hits[t] predicts slot t + 1)
+    after = hits[tau - 1:] if bank.declared else []
+    return res, hits, after
+
+
+def markov_top1(ep: Episode, M: int) -> float:
+    """Top-1 of a one-step-ahead online Markov predictor fitted on clean hops.
+
+    The conventional frequency-statistics forecaster: it counts transitions
+    between clean single-detection slots and calls the most frequent successor
+    of the latest clean channel.
+    """
+    counts = np.ones((M, M))
+    last, hits = None, []
+    true = ep.true_channels
+    for t, o in enumerate(ep.observations[:-1]):
+        if len(o.detections) == 1:
+            c = o.detections[0].channel
+            if last is not None:
+                counts[last, c] += 1
+            last = c
+        hits.append(last is not None and int(np.argmax(counts[last])) == int(true[t + 1]))
+    return float(np.mean(hits))
+
+
 def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int = WINDOW,
                progress=None) -> dict:
-    """Monte-Carlo identification scores, bank vs pairwise SPRT, per emitter and preset."""
+    """Monte-Carlo scores per emitter and preset: bank vs pairwise SPRT, plus next-hop."""
     rows = []
     for pr in presets:
         engine = Engine.build(pr["p_d"], pr["p_fa"], window=window)
         for em in emitters:
-            ots, base = [], []
+            ots, base, top1, top1_lock, mk = [], [], [], [], []
             for s in C.seeds(n_seeds):
                 ep, _ = draw_episode(engine, em["id"], s)
-                ots.append(run_bank(engine.bank, ep, eval_nexthop=False))
+                res, hits, after = score_episode(engine.bank, ep)
+                ots.append(res)
+                top1.append(float(np.mean(hits)))
+                if after:
+                    top1_lock.append(float(np.mean(after)))
+                mk.append(markov_top1(ep, M))
                 base.append(run_sprt(engine.sprt, ep))
             hops = [int(r.tau_stop) for r in ots if r.correct and r.declared]
             rows.append({
@@ -307,11 +357,21 @@ def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int 
                 "ots_acc": _rate([r.correct for r in ots]),
                 "ots_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
                                           and not r.correct for r in ots]),
+                "ots_unknown": _rate([r.decision_label == "unknown" for r in ots]),
+                "ots_locked": _rate([r.declared for r in ots]),
                 "ots_hops": hops,
+                "ots_top1": _rate(top1),
+                "ots_top1_locked": _rate(top1_lock),
+                "markov_top1": _rate(mk),
                 "base_acc": _rate([r.correct for r in base]),
                 "base_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
                                            and not r.correct for r in base]),
             })
             if progress is not None:
                 progress(pr["id"], em["id"], rows[-1])
-    return {"n_seeds": n_seeds, "window": window, "rows": rows}
+    return {"n_seeds": n_seeds, "window": window, "chance_top1": round(1.0 / M, 4), "rows": rows}
+
+
+def search_sizes(engine: Engine) -> dict:
+    """Candidate parameterisations each expert enumerates (0 for algebraic/statistical)."""
+    return {lab: _n_candidates(h) for lab, h in zip(engine.bank.labels, engine.bank.hypotheses)}

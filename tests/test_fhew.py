@@ -514,3 +514,31 @@ def test_dashboard_csprng_trace_makes_no_claim(demo_engine):
     assert tr["secret_recovered"] is None
     assert not tr["baseline"]["correct"]     # the no-H_0 baseline is forced to name one
 
+
+
+def test_dashboard_score_episode_matches_run_bank(demo_engine):
+    # the scoreboard runs past the lock to score forecasts; its decision must equal run_bank's
+    from dashboard.traces import draw_episode, score_episode
+    for gen in ("lfsr", "markov", "csprng"):
+        ep, _ = draw_episode(demo_engine, gen, 8919)
+        res, hits, after = score_episode(demo_engine.bank, ep)
+        ref = run_bank(demo_engine.bank, ep)
+        assert (res.decision_label, res.declared, res.tau_stop) == \
+            (ref.decision_label, ref.declared, ref.tau_stop)
+        assert len(hits) == demo_engine.window - 1
+        assert len(after) == (demo_engine.window - res.tau_stop if res.declared else 0)
+
+
+def test_dashboard_proof_textbook_bm_breaks_on_missed_hops():
+    from dashboard.proof import bm_vs_filtered
+    rows = {r["p_d"]: r for r in bm_vs_filtered(n_seeds=3)["rows"]}
+    assert rows[1.0]["bm"] == 1.0 and rows[0.8]["bm"] == 0.0
+    assert all(r["state_filtered"] == 1.0 for r in rows.values())
+
+
+def test_dashboard_standalone_inlines_every_local_asset(tmp_path):
+    from dashboard.build import write_standalone
+    out = write_standalone("window.OTS_DATA = null;\n", tmp_path / "page.html").read_text()
+    assert 'src="' not in out.replace('src="https://', "")
+    assert 'href="assets/' not in out
+    assert "OTS.views.register" in out and "OTS.boot()" in out

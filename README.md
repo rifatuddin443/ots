@@ -77,33 +77,40 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
 
 ## Demo dashboard
 
-A presentation-ready page that shows the bank working on one engagement at a
-time: an SDR-style waterfall of what the sensor reports (with ghosts, misses
-and the hidden true path drawn for the audience only), the live posterior race
-across every hypothesis, the lock-on verdict with the recovered secret next to
-the true one, the next-hop forecast landing on each hop before it arrives, the
-pairwise-SPRT baseline on the same observations, and a Monte-Carlo scoreboard.
-Every number on it comes from real `fhew.HypothesisBank` runs.
+A presentation-ready, multi-page dashboard that shows the bank working, aimed at a
+non-technical audience. Every number on it comes from real `fhew.HypothesisBank`
+runs recorded by `python -m dashboard.build`:
+
+| Page | What it shows |
+| --- | --- |
+| **Story** | the problem in three steps and the headline results |
+| **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
+| **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
+| **Challenge** | the audience tries to guess the next hop against OTS |
+| **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
+| **How it works** | the method in plain words: sense, score, decide, predict; the expert bank; the two safety rules |
 
 ```bash
-python -m dashboard.build      # record engagements + scoreboard -> dashboard/data.js (~1 min)
+python -m dashboard.build      # record engagements, scoreboard and proofs -> dashboard/data.js (~2 min)
 # then open dashboard/index.html in a browser: replays offline, no server or external scripts
-python -m dashboard.serve      # http://127.0.0.1:8050 : same page, plus new engagements run live
+python -m dashboard.serve      # http://127.0.0.1:8050 : same pages, plus new engagements run live
 python -m dashboard.build --reuse --standalone ots_demo.html   # one self-contained file to share
 ```
 
-`dashboard/data.js` is committed, so the page opens straight from a fresh
-clone. Press **Guided demo** (or `G`) for an auto-playing tour (LFSR, weak seed
-under a contested sensor, Hénon chaos, filtered LFSR, then the CSPRNG control
-where the bank answers "unknown" and the baseline invents a generator).
-Keys: `Space` play, `←`/`→` step, `R` restart, `N` next engagement, `T` truth
-overlay, `F` fullscreen.
+`dashboard/data.js` is committed, so the pages open straight from a fresh clone.
+Scenario, sensor quality, recorded run, display toggles and speed live in the
+settings drawer of the Live and Analysis pages. Press **G** for the guided demo
+(LFSR, weak seed under a contested sensor, Hénon chaos, filtered LFSR, then the
+CSPRNG control where the bank answers "unknown" and the standard test names a
+generator anyway). Keys: `1`–`6` pages, `Space` play, `←`/`→` step, `R` restart,
+`N` next run, `T` sensor mistakes, `S` settings, `F` full screen.
 
 The dashboard replays the exact episodes `experiments.common.episode_for` draws
 for each seed (checked in the tests), runs the one-expert-per-family
 identification bank of exp12/exp13 at MSPRT `δ = 0.05`, and keeps the bank on
-observations only; the truth overlay and secrets are read from the generator
-afterwards, for display.
+observations only; the truth overlays and secrets are read from the generator
+afterwards, for display. The two proof ablations in `dashboard/proof.py` follow
+the exp6/exp7 protocols with the same seeds.
 
 ## Experiments ↔ paper sections
 
@@ -197,8 +204,8 @@ fhew/
 configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp13 + shared style/harness
 scripts/run_all.py   run everything
-dashboard/           demo dashboard: trace recorder, build, live server, index.html
-tests/test_fhew.py   64 tests incl. the information-parity audit
+dashboard/           demo dashboard: recorder, proofs, build, live server, pages
+tests/test_fhew.py   67 tests incl. the information-parity audit
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -237,5 +244,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 64 tests, ~15s
+python -m pytest        # 67 tests, ~20s
 ```
