@@ -42,12 +42,14 @@
   --drawer-w: 312px;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; min-height: 100%; }
+html { background: var(--bg); }
 body {
   background:
     radial-gradient(1100px 560px at 22% -12%, rgba(34, 211, 238, 0.09), transparent 60%),
     radial-gradient(900px 500px at 100% 0%, rgba(57, 135, 229, 0.07), transparent 60%),
     var(--bg);
+  background-attachment: fixed;   /* the glow stays put instead of repeating down long pages */
   color: var(--ink);
   font: 15px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -104,7 +106,9 @@ a { color: var(--accent-ink); }
 .transport { display: flex; align-items: center; gap: 6px; }
 .hopclock { font: 500 12px/1 var(--mono); color: var(--muted); letter-spacing: 0.08em; margin-left: 6px; white-space: nowrap; }
 .hopclock b { font: 700 20px/1 var(--mono); color: var(--ink); letter-spacing: 0.03em; }
-.scen-chip { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scen-chip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1500px) { .shell.drawer-open .scen-chip { display: none; } }
+@media (min-width: 1281px) { .shell.drawer-open #settingsBtn { display: none; } }  /* docked drawer has its own close */
 .view { padding: 22px 28px 40px; min-width: 0; }
 
 /* settings drawer */
@@ -282,7 +286,10 @@ kbd { font: 600 10.5px var(--mono); border: 1px solid var(--line-2); border-bott
   .nav { flex-direction: row; gap: 4px; }
   .nav a { grid-template-columns: auto; padding: 7px 10px; white-space: nowrap; }
   .nav a svg { display: none; }
-  .topbar { position: static; padding: 12px 16px; }
+  .topbar { position: static; padding: 12px 16px; gap: 10px; }
+  .topbar .grow { display: none; }
+  .transport { flex-wrap: wrap; width: 100%; }
+  .scen-chip { display: none; }
   .view { padding: 16px 16px 32px; }
   .lead { font-size: 28px; }
   .tile-v { font-size: 27px; }
