@@ -14,12 +14,12 @@ used. What changed, and where:
 
 | # | Change | Where it lands |
 | --- | --- | --- |
-| 1 | **Next-channel prediction is the headline metric** (top-1 accuracy), with identification demoted to a supporting/ fast-path role. | §1, §4, §12 |
-| 2 | The **Fixed-Share expert mixture is realised as the next-channel predictor** (`fhew.experts.FixedShareMixture` / `fhew.predict.ChannelPredictor`): experts are weighted by *recent* predictive skill with a share-floor, and the mixed distribution is the system's next-hop output. | §4.2 |
-| 3 | The mixture **always carries a zero-shot universal predictor** (a gap-robust variable-order context-mixing model, plus a phase-space predictor and the barrage floor), so prediction survives a **limited bank**: on a generator no expert targets, the universal expert carries the prediction instead of collapsing to uniform. | §4.2, §5 |
-| 4 | The universal predictor is made **gap-robust**: its context is formed only from a *contiguous run of clean single-detection slots*, so missed hops and false alarms never corrupt the order-`k` rule it learns under a lossy sensor. | §4.2, §5 |
-| 5 | Added three **held-out "new algorithm" generators** (`lagged_fib`, `quadratic_cg`, `sine_map`) that no expert targets, to measure prediction generalisation. | §11 |
-| 6 | Added the prediction benchmark **`exp14`**: next-channel top-1 for the proposed predictor vs an identification-only bank vs online-Markov vs uniform, across in-bank and new algorithms, plus a detection-probability robustness sweep. | §12 |
+| 1 | **Next-channel prediction is the headline metric** (top-1 accuracy), with identification demoted to a supporting/ fast-path role. | Section 1, Section 4, Section 12 |
+| 2 | The **Fixed-Share expert mixture is realised as the next-channel predictor** (`fhew.experts.FixedShareMixture` / `fhew.predict.ChannelPredictor`): experts are weighted by *recent* predictive skill with a share-floor, and the mixed distribution is the system's next-hop output. | Section 4.2 |
+| 3 | The mixture **always carries a zero-shot universal predictor** (a gap-robust variable-order context-mixing model, plus a phase-space predictor and the barrage floor), so prediction survives a **limited bank**: on a generator no expert targets, the universal expert carries the prediction instead of collapsing to uniform. | Section 4.2, Section 5 |
+| 4 | The universal predictor is made **gap-robust**: its context is formed only from a *contiguous run of clean single-detection slots*, so missed hops and false alarms never corrupt the order-`k` rule it learns under a lossy sensor. | Section 4.2, Section 5 |
+| 5 | Added three **held-out "new algorithm" generators** (`lagged_fib`, `quadratic_cg`, `sine_map`) that no expert targets, to measure prediction generalisation. | Section 11 |
+| 6 | Added the prediction benchmark **`exp14`**: next-channel top-1 for the proposed predictor vs an identification-only bank vs online-Markov vs uniform, across in-bank and new algorithms, plus a detection-probability robustness sweep. | Section 12 |
 
 **Key measured result.** On `lagged_fib` — a new generator whose next channel
 depends on the last *two* channels, which no bank expert targets and which a
@@ -56,7 +56,7 @@ and this must hold even when the emitter uses an algorithm the recce bank has no
 expert for. Identifying ("cracking") a known generator is the *fast path* that
 makes the prediction a near-point-mass; it is not the goal. Because the bank is
 necessarily limited, the predictor is a **Fixed-Share expert mixture that always
-carries a zero-shot universal predictor** (§4.2): on a new, unseen algorithm the
+carries a zero-shot universal predictor** (Section 4.2): on a new, unseen algorithm the
 universal expert carries the prediction, so the next-channel distribution stays
 sharp instead of collapsing to the uniform floor, while a keyed CSPRNG correctly
 pins it at chance.
@@ -316,7 +316,7 @@ hidden channel), which keeps information parity; the per-slot constant the reduc
 emission drops is identical across experts and cancels in the weight update.
 Because the mixture weights by *recent* skill with a share-floor, it tracks
 whichever expert predicts best right now and recovers within a logarithmic number
-of steps after a regime switch — the Bayesian bank (§4.3), by contrast, weights by
+of steps after a regime switch — the Bayesian bank (Section 4.3), by contrast, weights by
 *cumulative* likelihood and can only predict well once an in-bank hypothesis wins.
 
 **The universal predictor makes a limited bank enough (3.1).** The mixture always
@@ -330,7 +330,7 @@ uniform. Gap-robustness is structural: the universal expert forms a context only
 from a *contiguous run of clean single-detection slots*, so a missed hop or a
 false-alarm slot breaks the run and it falls back to lower orders rather than
 learning a context that straddles a gap, keeping its order-`k` tables uncorrupted
-under detection loss. This is validated in `exp14` (§12): on the order-2
+under detection loss. This is validated in `exp14` (Section 12): on the order-2
 `lagged_fib`, prediction top-1 is **0.88** vs **0.42** for an identification-only
 bank.
 
@@ -894,7 +894,7 @@ convergence.
 is **top-1 next-channel accuracy** — the fraction of slots where the single
 most-probable channel is the one the emitter actually hops to — reported
 whole-window and at steady state, with top-3 and next-hop log-loss alongside, and
-measured on both in-bank families *and* the held-out new algorithms (§11). This is
+measured on both in-bank families *and* the held-out new algorithms (Section 11). This is
 the metric that captures the thesis goal directly: predict the next channel, for a
 known *or* unknown generator. The experiment that reports it is **`exp14`**
 (next-channel prediction): it compares the proposed predictor (Fixed-Share +
