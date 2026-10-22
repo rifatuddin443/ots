@@ -120,6 +120,10 @@ class DeterministicHypothesis(Hypothesis):
     def candidate_posterior(self) -> np.ndarray:
         return np.exp(self._filter.log_w)
 
+    def map_trajectory(self) -> np.ndarray:
+        """Channel trajectory of the most probable candidate."""
+        return self._filter.traj[self.map_candidate()]
+
 
 class MarkovHypothesis(Hypothesis):
     """First-order Markov hypothesis with an online-fitted transition matrix.
@@ -1117,6 +1121,11 @@ class HypothesisBank(Expert):
         p_hat = post @ self._next_hops
         s = p_hat.sum()
         return p_hat / s if s > 0 else self.channels.uniform()
+
+    @property
+    def hypotheses(self) -> list[Hypothesis]:
+        """The bank's hypotheses aligned with :attr:`labels` (index 0 = H_0)."""
+        return list(self._hyps)
 
     # --------------------------------------------------------------- posterior
     def posterior(self) -> np.ndarray:

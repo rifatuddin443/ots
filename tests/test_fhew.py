@@ -6,6 +6,7 @@ Sections:
   3. hypothesis bank, forward filter, stopping rules
   4. information-parity audit (paper Section 11)
   5. metrics, baselines, reuse interface
+  6. demo dashboard trace recorder
 """
 
 import numpy as np
@@ -469,3 +470,47 @@ def test_csprng_routes_to_unknown_in_full_bank():
             if r.decision_label in ("lfsr", "lcg", "lcg_full", "weak_seed", "filtered_lfsr"):
                 hard += 1
     assert hard == 0
+
+
+# ======================================================================
+# 6. demo dashboard trace recorder
+# ======================================================================
+
+@pytest.fixture(scope="module")
+def demo_engine():
+    from dashboard.traces import Engine
+    return Engine.build(0.8, 0.02)
+
+
+def test_dashboard_episode_matches_experiments(demo_engine):
+    # the dashboard must replay the very episode the experiments score for a seed
+    from dashboard.traces import draw_episode
+    from experiments.common import episode_for
+    for gen in ("lfsr", "weak_seed", "henon", "csprng"):
+        ours, _ = draw_episode(demo_engine, gen, 1234)
+        ref = episode_for(gen, demo_engine.channels, demo_engine.sensor, demo_engine.window, 1234)
+        assert np.array_equal(ours.true_channels, ref.true_channels)
+        assert [o.detections for o in ours.observations] == [o.detections for o in ref.observations]
+
+
+def test_dashboard_trace_is_consistent_with_run_bank(demo_engine):
+    from dashboard.traces import draw_episode, record_engagement
+    tr = record_engagement(demo_engine, "lfsr", 1000)
+    ep, _ = draw_episode(demo_engine, "lfsr", 1000)
+    ref = run_bank(demo_engine.bank, ep)
+    W = demo_engine.window
+    assert len(tr["post"]) == len(tr["fc"]) == len(tr["dets"]) == len(tr["alive"]) == W
+    assert tr["declared"] and tr["tau"] == ref.tau_stop and tr["decision"] == ref.decision_label == "lfsr"
+    assert tr["correct"] and tr["secret_match"] == "exact"
+    assert tr["post"][tr["tau"] - 1][tr["labels"].index("lfsr")] >= 0.95
+    assert tr["alive"][-1] <= 5 < tr["search_space"]
+    assert all(abs(sum(f) - 1000) <= 16 for f in tr["fc"])
+
+
+def test_dashboard_csprng_trace_makes_no_claim(demo_engine):
+    from dashboard.traces import record_engagement
+    tr = record_engagement(demo_engine, "csprng", 1000)
+    assert tr["decision"] == "unknown" and tr["correct"]
+    assert tr["secret_recovered"] is None
+    assert not tr["baseline"]["correct"]     # the no-H_0 baseline is forced to name one
+

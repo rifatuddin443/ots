@@ -75,6 +75,36 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
 
 ---
 
+## Demo dashboard
+
+A presentation-ready page that shows the bank working on one engagement at a
+time: an SDR-style waterfall of what the sensor reports (with ghosts, misses
+and the hidden true path drawn for the audience only), the live posterior race
+across every hypothesis, the lock-on verdict with the recovered secret next to
+the true one, the next-hop forecast landing on each hop before it arrives, the
+pairwise-SPRT baseline on the same observations, and a Monte-Carlo scoreboard.
+Every number on it comes from real `fhew.HypothesisBank` runs.
+
+```bash
+python -m dashboard.build      # record engagements + scoreboard -> dashboard/data.js (~1 min)
+# then open dashboard/index.html in a browser: replays offline, no server or external scripts
+python -m dashboard.serve      # http://127.0.0.1:8050 : same page, plus new engagements run live
+python -m dashboard.build --reuse --standalone ots_demo.html   # one self-contained file to share
+```
+
+`dashboard/data.js` is committed, so the page opens straight from a fresh
+clone. Press **Guided demo** (or `G`) for an auto-playing tour (LFSR, weak seed
+under a contested sensor, Hénon chaos, filtered LFSR, then the CSPRNG control
+where the bank answers "unknown" and the baseline invents a generator).
+Keys: `Space` play, `←`/`→` step, `R` restart, `N` next engagement, `T` truth
+overlay, `F` fullscreen.
+
+The dashboard replays the exact episodes `experiments.common.episode_for` draws
+for each seed (checked in the tests), runs the one-expert-per-family
+identification bank of exp12/exp13 at MSPRT `δ = 0.05`, and keeps the bank on
+observations only; the truth overlay and secrets are read from the generator
+afterwards, for display.
+
 ## Experiments ↔ paper sections
 
 | Script | Paper | What it shows |
@@ -167,7 +197,8 @@ fhew/
 configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp13 + shared style/harness
 scripts/run_all.py   run everything
-tests/test_fhew.py   61 tests incl. the information-parity audit
+dashboard/           demo dashboard: trace recorder, build, live server, index.html
+tests/test_fhew.py   64 tests incl. the information-parity audit
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -206,5 +237,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 46 tests, ~4s
+python -m pytest        # 64 tests, ~15s
 ```

@@ -1,0 +1,317 @@
+"""Record engagements of the identification bank for the demo dashboard.
+
+An engagement is one emitter observed through the lossy sensor for ``window``
+slots. :func:`record_engagement` runs the real bank (the one-expert-per-family
+identification bank of exp12/exp13) slot by slot and keeps everything the
+dashboard animates: the sensor's detections, the hidden truth (for the audience
+only -- the bank never sees it), the posterior over every hypothesis, the
+posterior-weighted next-hop forecast, the number of candidate generator states
+still plausible, and the recovered secret next to the true one. The pairwise
+SPRT baseline (no ``H_0``) is run on the *same* observations for comparison.
+
+Episodes are drawn exactly as ``experiments.common.episode_for`` draws them, so
+a dashboard trace is the same episode the experiments score for that seed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from experiments import common as C
+from fhew.baselines import PairwiseSPRT
+from fhew.channels import ChannelSet
+from fhew.config import GENERATOR_TARGET_FAMILY
+from fhew.experts import (
+    DeterministicHypothesis,
+    HypothesisBank,
+    LCGCryptanalysisHypothesis,
+    MixtureHMMHypothesis,
+    build_hypothesis,
+)
+from fhew.generators import make_generator
+from fhew.likelihood import SensorAwareEmission
+from fhew.sensor import SensorModel
+from fhew.sim import Episode, run_bank, run_sprt
+
+M = C.DEFAULT_M
+WINDOW = C.DEFAULT_WINDOW
+DELTA = 0.05
+
+#: a candidate counts as still plausible while its joint posterior
+#: P(family) * P(parameters | family) stays above this
+ALIVE_THRESHOLD = 1e-6
+
+#: naming a family that asserts an exact algebraic break when it is not the truth
+ALGEBRAIC_FAMILIES = frozenset({"lfsr", "filtered_lfsr", "lcg", "lcg_full", "weak_seed"})
+
+HYPOTHESES = [
+    {"id": "H0", "name": "Unknown (H₀)",
+     "desc": "None of the above: random or out-of-bank source"},
+    {"id": "lfsr", "name": "LFSR",
+     "desc": "Shift register · state-filtered Berlekamp–Massey"},
+    {"id": "filtered_lfsr", "name": "Filtered LFSR",
+     "desc": "Nonlinear combiner · correlation attack"},
+    {"id": "lcg", "name": "LCG",
+     "desc": "Linear congruential · seed search"},
+    {"id": "lcg_full", "name": "Full-state LCG",
+     "desc": "Exposed state · algebraic (a, c) recovery"},
+    {"id": "weak_seed", "name": "Weak-seed PRNG",
+     "desc": "Strong mixer, small keyspace · seed search"},
+    {"id": "chaos", "name": "Chaotic map",
+     "desc": "Logistic / tent / Hénon · symbolic-dynamics ID"},
+    {"id": "markov", "name": "Markov hopper",
+     "desc": "Statistical pattern · online transition fit"},
+]
+
+EMITTERS = [
+    {"id": "lfsr", "name": "LFSR", "kind": "Shift register",
+     "blurb": "A 5–7 bit linear-feedback shift register picks each hop."},
+    {"id": "filtered_lfsr", "name": "Filtered LFSR", "kind": "Nonlinear register",
+     "blurb": "A 9-bit register hidden behind a nonlinear Boolean combiner."},
+    {"id": "lcg", "name": "LCG", "kind": "Congruential PRNG",
+     "blurb": "A truncated linear congruential generator with a secret seed."},
+    {"id": "lcg_full", "name": "Full-state LCG", "kind": "Congruential PRNG",
+     "blurb": "An LCG whose whole state is the channel; (a, c) are secret."},
+    {"id": "weak_seed", "name": "Weak-seed PRNG", "kind": "Mixed PRNG",
+     "blurb": "A well-mixed PRNG (SplitMix64) keyed from only 256 seeds."},
+    {"id": "logistic", "name": "Logistic map", "kind": "Chaotic",
+     "blurb": "The chaotic logistic map x ← r·x(1−x), quantised to channels."},
+    {"id": "tent", "name": "Tent map", "kind": "Chaotic",
+     "blurb": "The chaotic tent map, quantised to channels."},
+    {"id": "henon", "name": "Hénon map", "kind": "Chaotic",
+     "blurb": "The 2-D Hénon attractor, quantised to channels."},
+    {"id": "markov", "name": "Markov hopper", "kind": "Statistical",
+     "blurb": "Each hop drawn from a hidden transition matrix."},
+    {"id": "csprng", "name": "Keyed CSPRNG", "kind": "Cryptographic control",
+     "blurb": "SHA-256 counter mode with a 128-bit key: nothing to exploit."},
+]
+
+PRESETS = [
+    {"id": "clear", "name": "Strong signal", "p_d": 0.95, "p_fa": 0.01},
+    {"id": "typical", "name": "Typical", "p_d": 0.80, "p_fa": 0.02},
+    {"id": "harsh", "name": "Contested", "p_d": 0.60, "p_fa": 0.05},
+]
+
+#: the guided demo: identification, a hostile sensor, chaos, and the H_0 test
+TOUR = [
+    {"emitter": "lfsr", "preset": "typical"},
+    {"emitter": "weak_seed", "preset": "harsh"},
+    {"emitter": "henon", "preset": "typical"},
+    {"emitter": "filtered_lfsr", "preset": "harsh"},
+    {"emitter": "csprng", "preset": "typical"},
+]
+
+
+@dataclass
+class Engine:
+    """A bank and a baseline SPRT for one sensor condition, reusable across episodes."""
+
+    channels: ChannelSet
+    sensor: SensorModel
+    window: int
+    bank: HypothesisBank
+    sprt: PairwiseSPRT
+
+    @classmethod
+    def build(cls, p_d: float, p_fa: float, *, window: int = WINDOW) -> "Engine":
+        ch = ChannelSet.of_size(M)
+        sensor = SensorModel(p_d=p_d, p_fa=p_fa)
+        specs = C.id_specs(M)
+        bank = C.make_bank(ch, window, sensor, specs, stopping={"kind": "msprt", "delta": DELTA})
+        sprt = PairwiseSPRT([build_hypothesis(s, ch, window) for s in specs],
+                            SensorAwareEmission(sensor), M)
+        return cls(ch, sensor, window, bank, sprt)
+
+    def search_space(self) -> int:
+        return sum(_n_candidates(h) for h in self.bank.hypotheses)
+
+
+# ------------------------------------------------------------------ episodes
+def draw_episode(engine: Engine, gen_name: str, seed: int):
+    """Draw the episode ``experiments.common.episode_for`` would, keeping the generator.
+
+    The same RNG calls happen in the same order as ``make_episode``, so the
+    stream is identical; the generator instance is kept only to reveal its
+    secret to the audience after the fact.
+    """
+    rng = np.random.default_rng(seed)
+    params = C.draw_episode_params(gen_name, rng)
+    gen = make_generator(gen_name, engine.channels.size, rng=rng, **params)
+    true = gen.sequence(engine.window)
+    obs = engine.sensor.observe(true, engine.channels, rng)
+    ep = Episode(true_label=gen_name, true_channels=true, observations=obs,
+                 window=engine.window, channels=engine.channels, p_d=engine.sensor.p_d,
+                 p_fa=engine.sensor.p_fa, seed=int(seed), gen_params=params)
+    ep.target_label = GENERATOR_TARGET_FAMILY.get(gen_name, "unknown")
+    return ep, gen
+
+
+def _n_candidates(h) -> int:
+    if isinstance(h, DeterministicHypothesis):
+        return h.n_particles
+    if isinstance(h, MixtureHMMHypothesis):
+        return len(h.log_w)
+    return 0
+
+
+def _alive(bank: HypothesisBank, post: np.ndarray) -> int:
+    n = 0
+    for k, h in enumerate(bank.hypotheses):
+        if isinstance(h, DeterministicHypothesis):
+            w = h.candidate_posterior()
+        elif isinstance(h, MixtureHMMHypothesis):
+            w = np.exp(h.log_w)
+        elif isinstance(h, LCGCryptanalysisHypothesis) and h._recovered:
+            w = np.ones(1)
+        else:
+            continue
+        n += int(np.count_nonzero(w * post[k] >= ALIVE_THRESHOLD))
+    return n
+
+
+# ------------------------------------------------------------------- secrets
+_CHAOS_NAMES = {"logistic": "Logistic map", "tent": "Tent map", "henon": "Hénon map"}
+
+
+def true_secret(gen) -> str:
+    """The generator's hidden parameters, phrased for the audience."""
+    name = gen.name
+    if name in ("lfsr", "filtered_lfsr"):
+        return f"L={gen.length} · state 0x{gen._init_state:X}"
+    if name in ("lcg", "weak_seed"):
+        return f"seed {gen._seed}"
+    if name == "lcg_full":
+        return f"a={gen.a}, c={gen.c}"
+    if name == "logistic":
+        return f"Logistic map · r={gen.r:g}"
+    if name == "tent":
+        return f"Tent map · μ={gen.mu:g}"
+    if name == "henon":
+        return f"Hénon map · a={gen.a:g}, b={gen.b:g}"
+    if name == "markov":
+        return "hidden 16×16 transition matrix"
+    if name == "csprng":
+        return f"{8 * len(gen.key)}-bit key"
+    return "—"
+
+
+def recovered_secret(h, truth: np.ndarray, true_text: str) -> tuple[str | None, str | None]:
+    """What the hypothesis' best candidate says the secret is, and how it matches.
+
+    The match is ``exact`` (same secret), ``equivalent`` (a different key that
+    produces the identical hop sequence), ``family`` (right chaotic map, nearby
+    parameter), ``model`` (a statistical fit, no single secret) or ``mismatch``.
+    """
+    text = None
+    if isinstance(h, DeterministicHypothesis) and h.candidate_labels:
+        lab = h.candidate_labels[h.map_candidate()]
+        if lab[0] in ("lfsr", "filtered_lfsr"):
+            text = f"L={lab[1]} \u00b7 state 0x{lab[-1]:X}"
+        elif lab[0] in ("lcg", "weak_seed"):
+            text = f"seed {lab[1]}"
+        if text is not None and text != true_text:
+            same = np.array_equal(h.map_trajectory()[:truth.size], truth)
+            return text, "equivalent" if same else "mismatch"
+    elif isinstance(h, MixtureHMMHypothesis):
+        fam, p = h.map_candidate()
+        if fam == "henon":
+            text = f"H\u00e9non map \u00b7 a={p[0]:g}, b={p[1]:g}"
+        else:
+            sym = "r" if fam == "logistic" else "\u03bc"
+            text = f"{_CHAOS_NAMES.get(fam, fam)} \u00b7 {sym}={p:g}"
+        if text != true_text:
+            return text, "family" if true_text.startswith(_CHAOS_NAMES[fam]) else "mismatch"
+    elif isinstance(h, LCGCryptanalysisHypothesis) and h._recovered:
+        text = f"a={h._a}, c={h._c}"
+    elif getattr(h, "label", "") == "markov":
+        return "16\u00d716 transition fitted online", "model"
+    if text is None:
+        return None, None
+    return text, "exact" if text == true_text else "mismatch"
+
+
+# ---------------------------------------------------------------- engagement
+def record_engagement(engine: Engine, gen_name: str, seed: int, *, preset: str = "custom") -> dict:
+    """Run one engagement slot by slot and return the dashboard trace."""
+    ep, gen = draw_episode(engine, gen_name, seed)
+    bank = engine.bank
+    bank.reset()
+    labels = bank.labels
+    dets, post, fc, kappa, alive = [], [], [], [], []
+    truth = np.asarray(ep.true_channels)
+    secret_true = true_secret(gen)
+    recovered = (None, None)
+    for o in ep.observations:
+        bank.update(o)
+        p = bank.posterior()
+        nxt = bank.predict()
+        dets.append(sorted(int(c) for c in o.detected_channels))
+        post.append([round(float(x), 5) for x in p])
+        fc.append([int(round(1000 * float(x))) for x in nxt])
+        nz = nxt[nxt > 0]
+        kappa.append(round(float(1.0 - (-(nz * np.log(nz)).sum()) / np.log(M)), 4))
+        alive.append(_alive(bank, p))
+        if bank.declared and bank.tau_stop == bank.t:
+            recovered = recovered_secret(bank.hypotheses[bank.declared_index], truth, secret_true)
+
+    if bank.declared:
+        decision = bank.declared_identity()
+        tau = int(bank.tau_stop)
+    else:
+        top = int(np.argmax(bank.posterior()))
+        decision = "unknown" if top == 0 else labels[top]
+        tau = None
+        if top != 0:
+            recovered = recovered_secret(bank.hypotheses[top], truth, secret_true)
+
+    base = run_sprt(engine.sprt, ep)
+    return {
+        "emitter": gen_name, "preset": preset, "seed": int(seed),
+        "p_d": engine.sensor.p_d, "p_fa": engine.sensor.p_fa,
+        "M": M, "window": engine.window, "delta": DELTA,
+        "labels": list(labels), "target": ep.target_label,
+        "truth": [int(c) for c in truth],
+        "dets": dets, "post": post, "fc": fc, "kappa": kappa, "alive": alive,
+        "search_space": engine.search_space(),
+        "declared": bool(bank.declared), "tau": tau, "decision": decision,
+        "correct": decision == ep.target_label,
+        "secret_true": secret_true, "secret_recovered": recovered[0],
+        "secret_match": recovered[1],
+        "baseline": {"decision": base.decision_label, "declared": base.declared,
+                     "tau": base.tau_stop, "correct": base.correct},
+    }
+
+
+# ---------------------------------------------------------------- scoreboard
+def _rate(xs) -> float | None:
+    return round(float(np.mean(xs)), 4) if xs else None
+
+
+def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int = WINDOW,
+               progress=None) -> dict:
+    """Monte-Carlo identification scores, bank vs pairwise SPRT, per emitter and preset."""
+    rows = []
+    for pr in presets:
+        engine = Engine.build(pr["p_d"], pr["p_fa"], window=window)
+        for em in emitters:
+            ots, base = [], []
+            for s in C.seeds(n_seeds):
+                ep, _ = draw_episode(engine, em["id"], s)
+                ots.append(run_bank(engine.bank, ep, eval_nexthop=False))
+                base.append(run_sprt(engine.sprt, ep))
+            hops = [int(r.tau_stop) for r in ots if r.correct and r.declared]
+            rows.append({
+                "emitter": em["id"], "preset": pr["id"], "n": len(ots),
+                "ots_acc": _rate([r.correct for r in ots]),
+                "ots_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
+                                          and not r.correct for r in ots]),
+                "ots_hops": hops,
+                "base_acc": _rate([r.correct for r in base]),
+                "base_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
+                                           and not r.correct for r in base]),
+            })
+            if progress is not None:
+                progress(pr["id"], em["id"], rows[-1])
+    return {"n_seeds": n_seeds, "window": window, "rows": rows}
