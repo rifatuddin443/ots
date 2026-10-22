@@ -44,6 +44,86 @@ def default_bank_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
     return specs
 
 
+# Canonical filtered-LFSR family the recce prior supplies to the correlation
+# attack; episodes of 'filtered_lfsr' in the coverage experiments use the same
+# (length, filter_taps) so the attack can enumerate the register state.
+CORRELATION_FILTER_TAPS = (0, 1, 2, 3, 4, 5, 6)
+CORRELATION_LFSR_LENGTH = 9
+
+
+def identification_bank_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
+                              weak_keyspace=256, lcg_seed_max=1024) -> list[HypothesisSpec]:
+    """One best expert per generator family -- the full identifiable bank.
+
+    A clean partition for MSPRT identification across every family the thesis
+    bank covers (paper Section 5): algebraic/state-filtered LFSR recovery, LCG
+    seed search and algebraic LCG cryptanalysis, weak-seed search, the
+    correlation attack on a filtered LFSR, parametric chaos ID, and the Markov /
+    context-mixing predictors. H_0 is added by the builder.
+    """
+    return [
+        HypothesisSpec("lfsr", "lfsr", "deterministic", grid={"length": list(lfsr_lengths)}),
+        HypothesisSpec("filtered_lfsr", "filtered_lfsr", "deterministic",
+                       grid={"length": [CORRELATION_LFSR_LENGTH],
+                             "filter_taps": [CORRELATION_FILTER_TAPS]}),
+        HypothesisSpec("lcg", "lcg", "deterministic", grid={"seed_max": lcg_seed_max}),
+        HypothesisSpec("lcg_full", "lcg_full", "lcg_crypto"),
+        HypothesisSpec("weak_seed", "weak_seed", "deterministic",
+                       grid={"keyspace": weak_keyspace}),
+        HypothesisSpec("chaos", "logistic", "chaos_id"),
+        HypothesisSpec("markov", "markov", "markov", options={"alpha": 1.0}),
+    ]
+
+
+def full_bank_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
+                    weak_keyspace=256, lcg_seed_max=1024) -> list[HypothesisSpec]:
+    """Every expert in the thesis bank, including redundant ones per family.
+
+    Used for the expert-coverage confusion matrix, where it matters which
+    *expert* fires for each generator (e.g. plain Berlekamp-Massey vs the
+    gap-robust state-filtered variant, both targeting an LFSR).
+    """
+    return [
+        HypothesisSpec("bm", "lfsr", "bm", options={"max_length": max(lfsr_lengths)}),
+        HypothesisSpec("state_filtered_bm", "lfsr", "deterministic",
+                       grid={"length": list(lfsr_lengths)}),
+        HypothesisSpec("correlation_attack", "filtered_lfsr", "deterministic",
+                       grid={"length": [CORRELATION_LFSR_LENGTH],
+                             "filter_taps": [CORRELATION_FILTER_TAPS]}),
+        HypothesisSpec("lcg_seed_search", "lcg", "deterministic", grid={"seed_max": lcg_seed_max}),
+        HypothesisSpec("lcg_cryptanalysis", "lcg_full", "lcg_crypto"),
+        HypothesisSpec("seed_search", "weak_seed", "deterministic",
+                       grid={"keyspace": weak_keyspace}),
+        HypothesisSpec("chaos_id", "logistic", "chaos_id"),
+        HypothesisSpec("phase_space", "logistic", "phase_space"),
+        HypothesisSpec("markov", "markov", "markov", options={"alpha": 1.0}),
+        HypothesisSpec("context_mixing", "markov", "context_mixing"),
+        HypothesisSpec("behaviour", "markov", "behaviour"),
+        HypothesisSpec("barrage", "none", "barrage"),
+    ]
+
+
+#: which generator family each expert label targets (for coverage scoring)
+EXPERT_TARGET_FAMILY = {
+    "lfsr": "lfsr", "bm": "lfsr", "state_filtered_bm": "lfsr",
+    "filtered_lfsr": "filtered_lfsr", "correlation_attack": "filtered_lfsr",
+    "lcg": "lcg", "lcg_seed_search": "lcg",
+    "lcg_full": "lcg_full", "lcg_cryptanalysis": "lcg_full",
+    "weak_seed": "weak_seed", "seed_search": "weak_seed",
+    "chaos": "chaos", "chaos_id": "chaos", "phase_space": "chaos",
+    "markov": "markov", "context_mixing": "markov", "behaviour": "markov",
+    "barrage": "unknown", "H0": "unknown",
+}
+
+#: the family a correct system should report for each true generator
+GENERATOR_TARGET_FAMILY = {
+    "lfsr": "lfsr", "filtered_lfsr": "filtered_lfsr", "lcg": "lcg", "lcg_full": "lcg_full",
+    "weak_seed": "weak_seed", "markov": "markov",
+    "logistic": "chaos", "tent": "chaos", "henon": "chaos",
+    "csprng": "unknown",
+}
+
+
 def specs_from_list(items: list[dict]) -> list[HypothesisSpec]:
     out = []
     for it in items:
@@ -66,7 +146,7 @@ def build_bank(
     stopping: dict | None = None,
     emission: dict | None = None,
     prior: np.ndarray | None = None,
-    h0_prior_floor: float = 0.1,
+    h0_prior_floor: float = 0.15,
 ) -> HypothesisBank:
     """Assemble a bank from specs + runtime settings.
 

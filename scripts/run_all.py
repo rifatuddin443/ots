@@ -28,6 +28,8 @@ from experiments import (
     exp9_eprocess_bound,
     exp10_calibration,
     exp11_stopping_law,
+    exp12_full_bank_confusion,
+    exp13_coverage,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -46,7 +48,13 @@ EXPERIMENTS = {
     "exp9": exp9_eprocess_bound,
     "exp10": exp10_calibration,
     "exp11": exp11_stopping_law,
+    "exp12": exp12_full_bank_confusion,
+    "exp13": exp13_coverage,
 }
+
+# The comprehensive full-bank experiments get their own (larger) seed floors so
+# the "huge, varied, all-types" dataset stays big even on a default run.
+_SEED_FLOOR = {"exp12": 40, "exp13": 50}
 
 
 def main(argv=None) -> None:
@@ -77,7 +85,8 @@ def main(argv=None) -> None:
     for name in chosen:
         mod = EXPERIMENTS[name]
         t0 = time.time()
-        results = mod.compute(n_seeds=n_seeds)
+        seeds = n_seeds if args.quick else max(n_seeds, _SEED_FLOOR.get(name, 0))
+        results = mod.compute(n_seeds=seeds)
         save_json(results, C.RESULTS_DIR / f"{mod.NAME}.json")
         mod.plot(results, C.FIG_DIR / f"{mod.NAME}.png")
         summary[mod.NAME] = _headline(name, results)
@@ -111,6 +120,12 @@ def _headline(name: str, r: dict) -> dict:
         if name == "exp11":
             return {"r2_log_inv_delta": r["panelA_delta"]["r2"],
                     "r2_inv_pd": r["panelB_pd"]["r2"]}
+        if name == "exp12":
+            return r["per_generator_family_accuracy"]
+        if name == "exp13":
+            return {"n_episodes": r["n_episodes"],
+                    **{g: {"acc": a["accuracy"], "hard_false_id": a["hard_false_id_rate"]}
+                       for g, a in r["aggregate_by_type"].items()}}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}

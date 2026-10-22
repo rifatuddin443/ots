@@ -7,10 +7,31 @@ from pathlib import Path
 import numpy as np
 
 from fhew.channels import ChannelSet
-from fhew.config import build_bank, default_bank_specs, in_bank_labels
+from fhew.config import (
+    CORRELATION_FILTER_TAPS,
+    CORRELATION_LFSR_LENGTH,
+    EXPERT_TARGET_FAMILY,
+    GENERATOR_TARGET_FAMILY,
+    build_bank,
+    default_bank_specs,
+    full_bank_specs,
+    identification_bank_specs,
+    in_bank_labels,
+)
 from fhew.experts import HypothesisSpec
 from fhew.sensor import SensorModel
 from fhew.sim import Episode, make_episode
+
+# Every generator family the full thesis bank covers, grouped by whether it is
+# identifiable (an expert targets it) or an out-of-bank / unbreakable adversary.
+ALL_GENERATORS = (
+    "lfsr", "filtered_lfsr", "lcg", "lcg_full", "weak_seed",
+    "logistic", "tent", "henon", "markov", "csprng",
+)
+IDENTIFIABLE_GENERATORS = (
+    "lfsr", "filtered_lfsr", "lcg", "lcg_full", "weak_seed",
+    "logistic", "tent", "henon", "markov",
+)
 
 RESULTS_DIR = Path("results")
 FIG_DIR = RESULTS_DIR / "figures"
@@ -65,13 +86,25 @@ def draw_episode_params(gen_name: str, rng: np.random.Generator, *,
     if gen_name == "lfsr":
         return {"length": int(rng.choice([5, 6, 7]))}
     if gen_name == "filtered_lfsr":
-        return {"length": int(rng.choice([9, 11]))}
+        # canonical filter family the correlation attack knows (length + taps)
+        return {"length": CORRELATION_LFSR_LENGTH, "filter_taps": CORRELATION_FILTER_TAPS}
     if gen_name == "weak_seed":
         return {"keyspace": 256}                 # matches the bank's weak-seed search
     if gen_name == "lcg":
         return {"seed": int(rng.integers(0, lcg_keyspace))}  # in-range secret
+    if gen_name == "lcg_full":
+        return {"seed": int(rng.integers(0, 256))}  # full-state LCG; a,c recovered
     if gen_name == "markov":
         return {"alpha": float(rng.choice([0.15, 0.2, 0.3]))}
+    if gen_name == "logistic":
+        return {"r": float(rng.choice([3.7, 3.8, 3.9, 3.95, 4.0])),
+                "x0": float(rng.uniform(0.1, 0.9))}
+    if gen_name == "tent":
+        return {"mu": float(rng.choice([1.9, 1.95, 1.99, 2.0])),
+                "x0": float(rng.uniform(0.1, 0.9))}
+    if gen_name == "henon":
+        return {"a": float(rng.choice([1.2, 1.3, 1.4])), "b": 0.3,
+                "x0": float(rng.uniform(-0.3, 0.3)), "y0": float(rng.uniform(-0.3, 0.3))}
     return {}
 
 
@@ -91,6 +124,16 @@ def episode_for(gen_name: str, channels: ChannelSet, sensor: SensorModel, window
 
 def default_target_labels(specs: list[HypothesisSpec]) -> set[str]:
     return in_bank_labels(specs)
+
+
+def id_specs(M: int = DEFAULT_M) -> list[HypothesisSpec]:
+    """One best expert per family -- the full identifiable bank."""
+    return identification_bank_specs(M)
+
+
+def full_specs(M: int = DEFAULT_M) -> list[HypothesisSpec]:
+    """Every expert (redundant per family) -- for the coverage confusion matrix."""
+    return full_bank_specs(M)
 
 
 def seeds(n: int, base: int = 1000) -> list[int]:

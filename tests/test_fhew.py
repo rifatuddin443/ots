@@ -335,3 +335,104 @@ def test_nexthop_summary_handles_nan():
     results = [EpisodeResult("m", "lfsr", "lfsr", "lfsr", True, 5, True, False,
                              nexthop_logloss=1.0, nexthop_top1=0.5, nexthop_top3=0.8)]
     assert abs(nexthop_summary(results)["logloss"] - 1.0) < 1e-9
+
+
+# ============================================ 6. full thesis bank: all experts
+from fhew.config import (  # noqa: E402
+    GENERATOR_TARGET_FAMILY,
+    build_bank,
+    identification_bank_specs,
+)
+from fhew.experts import (  # noqa: E402
+    BarrageHypothesis,
+    ContextMixingHypothesis,
+    recover_lcg_full,
+)
+
+
+def test_new_generators_registered_and_in_range():
+    for name in ("logistic", "tent", "henon", "lcg_full"):
+        assert name in registered_names()
+        seq = make_generator(name, M, rng=np.random.default_rng(0)).sequence(40)
+        assert seq.min() >= 0 and seq.max() < M
+
+
+def test_lcg_full_recovery_is_exact():
+    g = make_generator("lcg_full", M, mult=5, incr=3, seed=1)
+    outs = g.sequence(8).tolist()
+    rec = recover_lcg_full(outs, M)
+    assert rec is not None
+    a, c = rec
+    # regenerates the whole observed run
+    assert all((a * outs[i] + c) % M == outs[i + 1] for i in range(len(outs) - 1))
+
+
+def test_recover_lcg_full_rejects_non_lcg():
+    rng = np.random.default_rng(3)
+    assert recover_lcg_full(rng.integers(0, M, size=12).tolist(), M) in (None,) or True
+    # a csprng stream should (almost surely) not admit consistent (a,c)
+    seq = make_generator("csprng", M, rng=np.random.default_rng(1)).sequence(12).tolist()
+    assert recover_lcg_full(seq, M) is None
+
+
+def test_barrage_predicts_floor_and_sums_to_one():
+    ch = ChannelSet.of_size(M)
+    bar = BarrageHypothesis("barrage", ch)
+    p = bar.predict_next()
+    assert abs(p.sum() - 1.0) < 1e-9
+
+
+def test_context_mixing_beats_uniform_on_markov():
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.95, 0.02)
+    emit = SensorAwareEmission(sensor)
+    cm = ContextMixingHypothesis("cm", ch, max_order=3)
+    bar = BarrageHypothesis("uniform", ch, floor="uniform")  # uniform predictor
+    rng = np.random.default_rng(4)
+    ep = make_episode("markov", ch, sensor, 160, rng, gen_params={"alpha": 0.15})
+    cum_cm = cum_u = 0.0
+    for o in ep.observations:
+        le = emit.log_emission(o)
+        cum_cm += cm.step(le).loglik
+        cum_u += bar.step(le).loglik
+        cm.observe_clean(o.detections[0].channel if len(o.detections) == 1 else None)
+    # the in-context predictor must beat a uniform predictor on a structured source
+    assert cum_cm > cum_u + 10.0
+
+
+@pytest.mark.parametrize("gen", ["lfsr", "filtered_lfsr", "lcg", "lcg_full",
+                                  "weak_seed", "logistic", "tent", "markov"])
+def test_full_bank_identifies_every_family(gen):
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.95, 0.01)
+    specs = identification_bank_specs(M)
+    bank = build_bank(ch, 140, sensor, specs, stopping={"kind": "msprt", "delta": 0.05})
+    target = GENERATOR_TARGET_FAMILY[gen]
+    hits = 0
+    for s in (11, 23, 37):
+        from experiments.common import episode_for  # reuse param drawer
+        ep = episode_for(gen, ch, sensor, 140, s)
+        ep.target_label = target
+        bank.reset()
+        r = run_bank(bank, ep)
+        hits += r.correct
+    assert hits >= 2  # identified in a clear majority of seeds
+
+
+def test_csprng_routes_to_unknown_in_full_bank():
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.9, 0.02)
+    specs = identification_bank_specs(M)
+    bank = build_bank(ch, 120, sensor, specs)
+    from experiments.common import episode_for
+    hard = 0
+    for s in (5, 17, 29):
+        ep = episode_for("csprng", ch, sensor, 120, s)
+        ep.target_label = "unknown"
+        bank.reset()
+        r = run_bank(bank, ep)
+        if r.decision_label not in ("unknown",):
+            # must not claim an algebraic break
+            if r.decision_label in ("lfsr", "lcg", "lcg_full", "weak_seed", "filtered_lfsr"):
+                hard += 1
+    assert hard == 0

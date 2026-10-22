@@ -40,10 +40,12 @@ class Expert(abc.ABC):
 
 # ---- merged from fhew/experts/hypothesis.py ----
 import abc
+import math
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.special import logsumexp
+from scipy.special import log_softmax, logsumexp
 
 from fhew.channels import ChannelSet
 from fhew.generators import make_generator
@@ -53,6 +55,12 @@ from fhew.likelihood import (
     ChannelHMMFilter,
     DeterministicTrajectoryFilter,
     StepResult,
+)
+from fhew.recovery import (
+    bits_to_channels,
+    channels_to_bits,
+    recover_and_predict,
+    run_lfsr_from_coeffs,
 )
 
 
@@ -174,6 +182,534 @@ class MarkovHypothesis(Hypothesis):
         return self.M
 
 
+# ======================================================================
+# Additional experts completing the thesis bank (Section 5 expert table).
+# Each is self-contained and plugs into the same forward-filter interface;
+# the registry/dispatch at the bottom wires them into build_hypothesis.
+# ======================================================================
+
+
+class BarrageHypothesis(Hypothesis):
+    """Prior-weighted barrage floor (the zero-hop expert, paper Section 5).
+
+    Assumes no structure: every slot it predicts the reconnaissance-weighted
+    barrage distribution over the effective channel set. It is the floor the
+    system falls back to when nothing is predictable; as an explicit expert it
+    lets the bank report "spread over the channel plan" as an outcome.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, floor: str = "barrage"):
+        self.label = label
+        self.channels = channels
+        self._floor = channels.barrage_floor() if floor == "barrage" else channels.uniform()
+        self.reset()
+
+    def reset(self) -> None:
+        self._last_predict = self._floor.copy()
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        m = float(np.max(log_emission))
+        e = np.exp(log_emission - m)
+        tot = float((self._floor * e).sum())
+        loglik = m + float(np.log(tot)) if tot > 0 else m + float(np.log(np.finfo(float).tiny))
+        return StepResult(loglik=loglik, predict_next=self._floor.copy())
+
+    def predict_next(self) -> np.ndarray:
+        return self._floor.copy()
+
+    @property
+    def n_particles(self) -> int:
+        return self.channels.size
+
+
+class _PredictorHypothesis(Hypothesis):
+    """Base for online predictor experts that learn from the clean hop stream.
+
+    Shares the prequential pattern: ``step`` scores the current slot with a
+    one-step-ahead predictive formed from *earlier* clean channels, then
+    ``observe_clean`` ingests the slot's clean channel and refreshes the
+    prediction for the next slot. Gap-robust because it reads only clean
+    single-detection slots. Subclasses implement the model hooks.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet):
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self.reset()
+
+    def reset(self) -> None:
+        self._reset_model()
+        self.prior = self.channels.uniform()
+        self._last_predict = self.channels.uniform()
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        m = float(np.max(log_emission))
+        e = np.exp(log_emission - m)
+        tot = float((self.prior * e).sum())
+        loglik = m + float(np.log(tot)) if tot > 0 else m + float(np.log(np.finfo(float).tiny))
+        self._last_predict = self.prior.copy()
+        return StepResult(loglik=loglik, predict_next=self.prior.copy())
+
+    def observe_clean(self, channel: int | None) -> None:
+        if channel is not None:
+            self._ingest(int(channel))
+        self.prior = self._predict_next_dist()
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return self.M
+
+    # ---- subclass hooks ----
+    def _reset_model(self) -> None:  # pragma: no cover - overridden
+        ...
+
+    def _ingest(self, channel: int) -> None:  # pragma: no cover - overridden
+        ...
+
+    def _predict_next_dist(self) -> np.ndarray:  # pragma: no cover - overridden
+        return self.channels.uniform()
+
+
+class ContextMixingHypothesis(_PredictorHypothesis):
+    """Zero-shot, gap-robust in-context predictor (variable-order Markov mixture).
+
+    A training-free universal predictor (PPM / context-mixing style): count
+    models of orders ``0..max_order`` each predict the next channel from their
+    context, and the mixture weights them by recent predictive log-loss
+    (exponential weights). It adapts in-context across the whole adversary
+    library with no per-sequence training, standing in for the journal's
+    zero-shot neural expert without a deep-learning dependency.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, max_order: int = 3,
+                 eta: float = 0.5, laplace: float = 0.5):
+        self.max_order = int(max_order)
+        self.eta = float(eta)
+        self.laplace = float(laplace)
+        super().__init__(label, channels)
+
+    def _reset_model(self) -> None:
+        K = self.max_order
+        self.weights = np.full(K + 1, 1.0 / (K + 1))
+        self.tables = [dict() for _ in range(K + 1)]
+        self.context = deque(maxlen=K)
+
+    def _ctx(self, order: int) -> tuple:
+        if order == 0:
+            return ()
+        ctx = tuple(self.context)
+        return ctx[-order:] if len(ctx) >= order else None
+
+    def _order_pred(self, order: int) -> np.ndarray:
+        key = self._ctx(order)
+        counts = self.tables[order].get(key) if key is not None else None
+        if counts is None:
+            return self.channels.uniform()
+        sm = counts + self.laplace
+        return sm / sm.sum()
+
+    def _ingest(self, channel: int) -> None:
+        # update expert weights by each order's loss predicting `channel`
+        preds = [self._order_pred(o) for o in range(self.max_order + 1)]
+        losses = np.array([-math.log(max(float(p[channel]), 1e-12)) for p in preds])
+        self.weights = self.weights * np.exp(-self.eta * losses)
+        self.weights /= self.weights.sum()
+        # update count tables context -> channel (context is pre-append)
+        for o in range(self.max_order + 1):
+            key = self._ctx(o)
+            if key is None:
+                continue
+            tab = self.tables[o]
+            if key not in tab:
+                tab[key] = np.zeros(self.M)
+            tab[key][channel] += 1.0
+        self.context.append(channel)
+
+    def _predict_next_dist(self) -> np.ndarray:
+        mix = np.zeros(self.M)
+        for o in range(self.max_order + 1):
+            mix += self.weights[o] * self._order_pred(o)
+        s = mix.sum()
+        return mix / s if s > 0 else self.channels.uniform()
+
+    def map_order(self) -> int:
+        return int(np.argmax(self.weights))
+
+
+class PhaseSpacePredictorHypothesis(_PredictorHypothesis):
+    """Short-horizon forecaster for unknown chaotic dynamics (paper Section 5).
+
+    Takens-style delay embedding + nearest-neighbour prediction: it embeds the
+    clean channel stream into ``dim``-dimensional delay vectors, finds the
+    ``k`` past states nearest the current one, and predicts their successors. It
+    needs no knowledge of the map family; it fails (error reaches uniform) when
+    the dynamics are not low-dimensional.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, dim: int = 3, k: int = 8):
+        self.dim = int(dim)
+        self.k = int(k)
+        super().__init__(label, channels)
+
+    def _reset_model(self) -> None:
+        self.hist: list[int] = []
+
+    def _ingest(self, channel: int) -> None:
+        self.hist.append(channel)
+
+    def _predict_next_dist(self) -> np.ndarray:
+        h = self.hist
+        n = len(h)
+        d = self.dim
+        if n < d + 1:
+            return self.channels.uniform()
+        query = np.asarray(h[-d:], dtype=np.float64)
+        past = np.asarray(h, dtype=np.float64)
+        # delay vectors end at indices i in [d-1, n-2]; successor is h[i+1]
+        idx = np.arange(d - 1, n - 1)
+        vecs = np.stack([past[i - d + 1:i + 1] for i in idx])
+        dists = np.sum((vecs - query) ** 2, axis=1)
+        order = np.argsort(dists)[: self.k]
+        counts = np.full(self.M, 0.1)
+        for j in order:
+            counts[h[idx[j] + 1]] += 1.0
+        return counts / counts.sum()
+
+
+class BehaviourHypothesis(_PredictorHypothesis):
+    """Reduced reactive-behaviour predictor (stand-in for the journal TD-MPC2).
+
+    A recency-weighted first-order model: transition counts decay each step, so
+    the prediction tracks a drifting or reactive policy rather than a stationary
+    one. In the passive conference setting there are no own-actions to condition
+    on, so this is intentionally a reduced stand-in for the journal's model-based
+    behaviour expert; it degrades to uniform as a policy adapts away from its
+    recent statistics.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, decay: float = 0.9,
+                 laplace: float = 0.2):
+        self.decay = float(decay)
+        self.laplace = float(laplace)
+        super().__init__(label, channels)
+
+    def _reset_model(self) -> None:
+        self.counts = np.full((self.M, self.M), self.laplace)
+        self.last = None
+
+    def _ingest(self, channel: int) -> None:
+        if self.last is not None:
+            self.counts *= self.decay
+            self.counts[self.last, channel] += 1.0
+        self.last = channel
+
+    def _predict_next_dist(self) -> np.ndarray:
+        if self.last is None:
+            return self.channels.uniform()
+        row = self.counts[self.last]
+        return row / row.sum()
+
+
+class MixtureHMMHypothesis(Hypothesis):
+    """A posterior over candidate channel-transition models (used by chaos ID).
+
+    Holds one :class:`ChannelHMMFilter` per candidate transition matrix and a
+    posterior over candidates, updated by each candidate's one-step likelihood.
+    The marginal is the hypothesis likelihood; the winning candidate names the
+    recovered parameter.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, transitions: list,
+                 cand_labels: list | None = None):
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self._T = [np.asarray(T, dtype=np.float64) for T in transitions]
+        if not self._T:
+            raise ValueError(f"MixtureHMMHypothesis '{label}' needs >=1 transition")
+        self.cand_labels = cand_labels
+        self.reset()
+
+    def reset(self) -> None:
+        self._filters = [ChannelHMMFilter(T) for T in self._T]
+        self.log_w = np.full(len(self._T), -np.log(len(self._T)))
+        self._last_predict = self.channels.uniform()
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        lls = np.empty(len(self._filters))
+        preds = np.empty((len(self._filters), self.M))
+        for i, f in enumerate(self._filters):
+            r = f.step(log_emission)
+            lls[i] = r.loglik
+            preds[i] = r.predict_next
+        a = self.log_w + lls
+        mix = float(logsumexp(a))
+        self.log_w = a - mix
+        w = np.exp(self.log_w)
+        predict_next = w @ preds
+        s = predict_next.sum()
+        predict_next = predict_next / s if s > 0 else self.channels.uniform()
+        self._last_predict = predict_next
+        return StepResult(loglik=mix, predict_next=predict_next)
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    def map_candidate(self):
+        i = int(np.argmax(self.log_w))
+        return self.cand_labels[i] if self.cand_labels else i
+
+    @property
+    def n_particles(self) -> int:
+        return len(self._T) * self.M
+
+
+def _induced_transition(family: str, kw: dict, M: int, n_sim: int = 6000,
+                        starts=(0.1, 0.4, 0.7), alpha: float = 1.0) -> np.ndarray:
+    """Estimate the quantised symbolic-dynamics transition matrix of a chaotic map.
+
+    Simulates the map (over several initial conditions) and bins consecutive
+    channels. Deterministic given ``(family, kw, M)``.
+    """
+    counts = np.full((M, M), alpha, dtype=np.float64)
+    for x0 in starts:
+        if family == "henon":
+            g = make_generator(family, M, x0=float(x0) - 0.4, y0=0.0, **kw)
+        else:
+            g = make_generator(family, M, x0=float(x0), **kw)
+        seq = g.sequence(n_sim)
+        flat = np.ravel_multi_index((seq[:-1], seq[1:]), (M, M))
+        np.add.at(counts.reshape(-1), flat, 1.0)
+    return counts / counts.sum(axis=1, keepdims=True)
+
+
+_DEFAULT_CHAOS_GRID = {
+    "logistic": [3.6, 3.7, 3.8, 3.9, 3.95, 4.0],
+    "tent": [1.9, 1.95, 1.99, 2.0],
+    "henon": [(1.4, 0.3), (1.2, 0.3), (1.3, 0.3)],
+}
+
+
+def _build_chaos_id(spec: "HypothesisSpec", channels: ChannelSet) -> MixtureHMMHypothesis:
+    grid = spec.grid or _DEFAULT_CHAOS_GRID
+    n_sim = int(spec.options.get("n_sim", 6000))
+    transitions, labels = [], []
+    for family, params in grid.items():
+        for p in params:
+            if family == "logistic":
+                kw = {"r": float(p)}
+            elif family == "tent":
+                kw = {"mu": float(p)}
+            elif family == "henon":
+                a, b = p if isinstance(p, (list, tuple)) else (1.4, 0.3)
+                kw = {"a": float(a), "b": float(b)}
+            else:
+                continue
+            transitions.append(_induced_transition(family, kw, channels.size, n_sim=n_sim))
+            labels.append((family, p))
+    return MixtureHMMHypothesis(spec.label, channels, transitions, labels)
+
+
+def _longest_clean_run(clean: dict):
+    """Return ``(start_slot, [channels])`` for the longest run of consecutive
+    clean slots, or ``None`` if empty."""
+    if not clean:
+        return None
+    slots = sorted(clean)
+    best_start, best = slots[0], [clean[slots[0]]]
+    cur_start, cur = slots[0], [clean[slots[0]]]
+    for prev, s in zip(slots, slots[1:]):
+        if s == prev + 1:
+            cur.append(clean[s])
+        else:
+            if len(cur) > len(best):
+                best_start, best = cur_start, cur
+            cur_start, cur = s, [clean[s]]
+    if len(cur) > len(best):
+        best_start, best = cur_start, cur
+    return best_start, best
+
+
+class AlgebraicLFSRHypothesis(Hypothesis):
+    """Plain Berlekamp-Massey expert: collapse an LFSR from clean *consecutive*
+    outputs (paper Section 5).
+
+    Unlike the gap-robust state-filtered variant (the enumeration
+    :class:`DeterministicHypothesis`), this needs a run of consecutive clean
+    slots of length about ``2L`` to recover the recurrence; any missed detection
+    inside the run breaks it. Once recovered it rolls the register forward across
+    gaps and predicts deterministically. This realises the brittle "Berlekamp-
+    Massey" row distinct from "State-filtered BM".
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, max_length: int = 9,
+                 min_run: int | None = None):
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self.b = _bits_per_channel(self.M)
+        self.max_length = int(max_length)
+        self.min_run = int(min_run) if min_run else (2 * self.max_length + 4)
+        self.reset()
+
+    def reset(self) -> None:
+        self.t = 0
+        self._clean = {}
+        self._recovered = False
+        self._coeffs = None
+        self._L = None
+        self._s = None
+        self._bits = None
+        self._last_predict = self.channels.uniform()
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        if self._recovered:
+            ch = self._channel_at(self.t)
+            pred = np.zeros(self.M)
+            pred[ch] = 1.0
+            loglik = float(log_emission[ch])
+        else:
+            pred = self.channels.uniform()
+            m = float(np.max(log_emission))
+            e = np.exp(log_emission - m)
+            loglik = m + float(np.log(float((pred * e).sum())))
+        self._last_predict = pred
+        self.t += 1
+        return StepResult(loglik=loglik, predict_next=pred)
+
+    def observe_clean(self, channel: int | None) -> None:
+        if channel is not None:
+            self._clean[self.t - 1] = int(channel)
+            if not self._recovered:
+                self._try_recover()
+
+    def _try_recover(self) -> None:
+        run = _longest_clean_run(self._clean)
+        if run is None or len(run[1]) < self.min_run:
+            return
+        s, chans = run
+        res = recover_and_predict(chans, b=self.b, horizon=1, max_length=self.max_length)
+        if not res.recovered:
+            return
+        self._coeffs = res.coeffs
+        self._L = res.length
+        self._s = s
+        self._bits = list(int(x) for x in channels_to_bits(np.asarray(chans), self.b))
+        self._recovered = True
+
+    def _channel_at(self, slot: int) -> int:
+        need = (slot - self._s + 1) * self.b
+        while len(self._bits) < need:
+            self._bits.append(run_lfsr_from_coeffs(self._bits, self._coeffs, self._L))
+        off = (slot - self._s) * self.b
+        v = 0
+        for k in range(self.b):
+            v = (v << 1) | int(self._bits[off + k])
+        return v
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return 1
+
+
+def recover_lcg_full(outputs, m: int):
+    """Recover ``(a, c)`` of a full-state LCG from consecutive outputs mod ``m``.
+
+    Uses ``a = (x2 - x1)(x1 - x0)^{-1} mod m`` over a usable triple, then
+    verifies against the whole run. Returns ``None`` if no consistent parameters
+    are found (the "lattice reduction finds nothing" failure of Section 5).
+    """
+    xs = [int(v) for v in outputs]
+    n = len(xs)
+    if n < 4:
+        return None
+    for i in range(n - 2):
+        d0 = (xs[i + 1] - xs[i]) % m
+        d1 = (xs[i + 2] - xs[i + 1]) % m
+        if math.gcd(d0, m) != 1:
+            continue
+        a = (d1 * pow(d0, -1, m)) % m
+        c = (xs[i + 1] - a * xs[i]) % m
+        if all((a * xs[j] + c) % m == xs[j + 1] for j in range(n - 1)):
+            return a, c
+    return None
+
+
+class LCGCryptanalysisHypothesis(Hypothesis):
+    """Algebraic LCG cryptanalysis expert (paper Section 5).
+
+    Targets a full-state LCG (``lcg_full``) whose channel is the state itself.
+    From a few consecutive clean outputs it recovers the multiplier and increment
+    algebraically (modulus = M known), then predicts the future deterministically
+    from the last known state -- robust to gaps once recovered. Distinct from the
+    seed-search LCG hypothesis, which attacks the high-bit-truncated generator.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, min_run: int = 6):
+        # min_run >= 6 keeps the chance of a spurious consistent (a,c) on a
+        # non-LCG run negligible (~ M**-(min_run-3)), so this expert almost never
+        # makes a false algebraic claim.
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self.min_run = int(min_run)
+        self.reset()
+
+    def reset(self) -> None:
+        self.t = 0
+        self._clean = {}
+        self._recovered = False
+        self._a = None
+        self._c = None
+        self._last_known_slot = None
+        self._last_known_state = None
+        self._last_predict = self.channels.uniform()
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        if self._recovered and self._last_known_slot is not None:
+            state = self._last_known_state
+            for _ in range(self.t - self._last_known_slot):
+                state = (self._a * state + self._c) % self.M
+            pred = np.zeros(self.M)
+            pred[state] = 1.0
+            loglik = float(log_emission[state])
+        else:
+            pred = self.channels.uniform()
+            m = float(np.max(log_emission))
+            e = np.exp(log_emission - m)
+            loglik = m + float(np.log(float((pred * e).sum())))
+        self._last_predict = pred
+        self.t += 1
+        return StepResult(loglik=loglik, predict_next=pred)
+
+    def observe_clean(self, channel: int | None) -> None:
+        if channel is not None:
+            self._clean[self.t - 1] = int(channel)
+            self._last_known_slot = self.t - 1
+            self._last_known_state = int(channel)
+            if not self._recovered:
+                run = _longest_clean_run(self._clean)
+                if run is not None and len(run[1]) >= self.min_run:
+                    res = recover_lcg_full(run[1], self.M)
+                    if res is not None:
+                        self._a, self._c = res
+                        self._recovered = True
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return 1
+
+
 # ----------------------------------------------------------------- spec / build
 @dataclass
 class HypothesisSpec:
@@ -251,10 +787,39 @@ def _generic_grid_trajectories(family, channels, horizon, grid, max_particles):
     return np.asarray(out, dtype=np.int64), labels
 
 
+def _filtered_lfsr_trajectories(channels, horizon, grid, max_particles):
+    """Correlation-attack expert: enumerate register states of a *known* filtered
+    LFSR family and score each through the sensor-aware filter.
+
+    This is the Bayesian-optimal analogue of a correlation attack on a
+    nonlinearly-filtered LFSR: the recce supplies the filter family
+    ``(length, taps, filter_taps)`` and we marginalise over the register state,
+    recovering it under gaps where plain Berlekamp-Massey fails.
+    """
+    M = channels.size
+    lengths = grid.get("length", [9])
+    ft_list = grid.get("filter_taps") or [tuple(range(7))]
+    ft_list = [tuple(ft) for ft in ft_list]
+    out, labels = [], []
+    for L in lengths:
+        taps = grid.get("taps", {}).get(L, _PRIMITIVE_TAPS[L]) if isinstance(
+            grid.get("taps"), dict) else _PRIMITIVE_TAPS[L]
+        for ft in ft_list:
+            for state in range(1, 1 << L):
+                g = make_generator("filtered_lfsr", M, length=L, taps=taps,
+                                   state=state, filter_taps=ft)
+                out.append(g.sequence(horizon))
+                labels.append(("filtered_lfsr", L, ft, state))
+                if len(out) >= max_particles:
+                    return np.asarray(out, dtype=np.int64), labels
+    return np.asarray(out, dtype=np.int64), labels
+
+
 _TRAJ_BUILDERS = {
     "lfsr": _lfsr_trajectories,
     "weak_seed": _weak_seed_trajectories,
     "lcg": _lcg_trajectories,
+    "filtered_lfsr": _filtered_lfsr_trajectories,
 }
 
 
@@ -266,6 +831,28 @@ def build_hypothesis(spec: HypothesisSpec, channels: ChannelSet, horizon: int,
                             floor=spec.options.get("floor", "uniform"), label=spec.label)
     if spec.kind == "markov":
         return MarkovHypothesis(spec.label, channels, alpha=spec.options.get("alpha", 1.0))
+    if spec.kind == "barrage":
+        return BarrageHypothesis(spec.label, channels,
+                                 floor=spec.options.get("floor", "barrage"))
+    if spec.kind == "context_mixing":
+        return ContextMixingHypothesis(spec.label, channels,
+                                       max_order=spec.options.get("max_order", 3),
+                                       eta=spec.options.get("eta", 0.5))
+    if spec.kind == "phase_space":
+        return PhaseSpacePredictorHypothesis(spec.label, channels,
+                                             dim=spec.options.get("dim", 3),
+                                             k=spec.options.get("k", 8))
+    if spec.kind == "behaviour":
+        return BehaviourHypothesis(spec.label, channels,
+                                   decay=spec.options.get("decay", 0.9))
+    if spec.kind == "chaos_id":
+        return _build_chaos_id(spec, channels)
+    if spec.kind == "bm":
+        return AlgebraicLFSRHypothesis(spec.label, channels,
+                                       max_length=spec.options.get("max_length", 9))
+    if spec.kind == "lcg_crypto":
+        return LCGCryptanalysisHypothesis(spec.label, channels,
+                                          min_run=spec.options.get("min_run", 4))
     if spec.kind == "deterministic":
         builder = _TRAJ_BUILDERS.get(spec.family)
         if builder is not None:

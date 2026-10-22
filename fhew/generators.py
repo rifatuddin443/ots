@@ -445,3 +445,181 @@ class CSPRNGGenerator(Generator):
 
     def describe(self) -> dict:
         return {"name": self.name, "n_channels": self.n_channels, "keyed": True}
+
+# ---- chaotic map generators (for the parametric-chaos-ID and phase-space experts) ----
+
+
+def _chaos_channel(x: float, n_channels: int) -> int:
+    """Quantise a map state ``x in [0,1)`` to a channel index (symbolic dynamics)."""
+    c = int(x * n_channels)
+    if c < 0:
+        return 0
+    if c >= n_channels:
+        return n_channels - 1
+    return c
+
+
+@register("logistic")
+class LogisticMapGenerator(Generator):
+    """Logistic map ``x <- r x (1 - x)`` quantised to channels.
+
+    Chaotic for ``r`` in roughly ``[3.57, 4]`` (fully chaotic at ``r = 4``). The
+    hidden parameters are the map parameter ``r`` and the initial condition
+    ``x0``. The parametric-chaos-ID expert recovers ``r``; the phase-space
+    predictor forecasts short-horizon without knowing the family.
+    """
+
+    def __init__(self, n_channels: int, r: float, x0: float, burn_in: int = 64):
+        super().__init__(n_channels)
+        self.r = float(r)
+        self._x0 = float(x0)
+        self.burn_in = int(burn_in)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               r: float = 3.95, x0: float | None = None, burn_in: int = 64):
+        rng = rng or np.random.default_rng()
+        if x0 is None:
+            x0 = float(rng.uniform(0.05, 0.95))
+        return cls(n_channels=n_channels, r=r, x0=x0, burn_in=burn_in)
+
+    def reset(self) -> None:
+        x = self._x0
+        for _ in range(self.burn_in):  # discard the transient
+            x = self.r * x * (1.0 - x)
+        self.x = x
+
+    def next_channel(self) -> int:
+        self.x = self.r * self.x * (1.0 - self.x)
+        return _chaos_channel(self.x, self.n_channels)
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "r": self.r}
+
+
+@register("tent")
+class TentMapGenerator(Generator):
+    """Tent map ``x <- mu * min(x, 1 - x)`` quantised to channels.
+
+    Chaotic for ``mu`` near 2 (fully chaotic at ``mu = 2``). Parameter ``mu``.
+    """
+
+    def __init__(self, n_channels: int, mu: float, x0: float, burn_in: int = 64):
+        super().__init__(n_channels)
+        self.mu = float(mu)
+        self._x0 = float(x0)
+        self.burn_in = int(burn_in)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               mu: float = 1.99, x0: float | None = None, burn_in: int = 64):
+        rng = rng or np.random.default_rng()
+        if x0 is None:
+            x0 = float(rng.uniform(0.05, 0.95))
+        return cls(n_channels=n_channels, mu=mu, x0=x0, burn_in=burn_in)
+
+    def _map(self, x: float) -> float:
+        return self.mu * (x if x < 0.5 else 1.0 - x)
+
+    def reset(self) -> None:
+        x = self._x0
+        for _ in range(self.burn_in):
+            x = self._map(x)
+        self.x = min(max(x, 0.0), 1.0 - 1e-12)
+
+    def next_channel(self) -> int:
+        self.x = min(max(self._map(self.x), 0.0), 1.0 - 1e-12)
+        return _chaos_channel(self.x, self.n_channels)
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "mu": self.mu}
+
+
+@register("henon")
+class HenonMapGenerator(Generator):
+    """Hénon map ``x <- 1 - a x^2 + y, y <- b x`` with the x-coordinate quantised.
+
+    Chaotic at the classic ``a = 1.4, b = 0.3``. The x-coordinate (roughly in
+    ``[-1.5, 1.5]``) is affinely mapped to ``[0, 1)`` before quantisation.
+    """
+
+    X_LO, X_HI = -1.5, 1.5
+
+    def __init__(self, n_channels: int, a: float, b: float, x0: float, y0: float,
+                 burn_in: int = 64):
+        super().__init__(n_channels)
+        self.a = float(a)
+        self.b = float(b)
+        self._x0 = float(x0)
+        self._y0 = float(y0)
+        self.burn_in = int(burn_in)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               a: float = 1.4, b: float = 0.3, x0: float | None = None,
+               y0: float | None = None, burn_in: int = 64):
+        rng = rng or np.random.default_rng()
+        if x0 is None:
+            x0 = float(rng.uniform(-0.3, 0.3))
+        if y0 is None:
+            y0 = float(rng.uniform(-0.3, 0.3))
+        return cls(n_channels=n_channels, a=a, b=b, x0=x0, y0=y0, burn_in=burn_in)
+
+    def reset(self) -> None:
+        x, y = self._x0, self._y0
+        for _ in range(self.burn_in):
+            x, y = 1.0 - self.a * x * x + y, self.b * x
+        self.x, self.y = x, y
+
+    def next_channel(self) -> int:
+        self.x, self.y = 1.0 - self.a * self.x * self.x + self.y, self.b * self.x
+        u = (self.x - self.X_LO) / (self.X_HI - self.X_LO)
+        return _chaos_channel(min(max(u, 0.0), 1.0 - 1e-12), self.n_channels)
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "a": self.a, "b": self.b}
+
+# ---- full-state LCG (for the algebraic LCG-cryptanalysis expert) ----
+
+
+@register("lcg_full")
+class FullStateLCGGenerator(Generator):
+    """LCG whose modulus equals the channel count, so the channel IS the state.
+
+    ``x <- (a x + c) mod M`` with the channel reported as ``x`` itself. Because
+    the full state is observed, the algebraic LCG-cryptanalysis expert can
+    recover ``(a, c)`` from a few consecutive clean outputs (unlike the
+    high-bit-truncated :class:`LCGGenerator`, which hides the low bits and is
+    attacked by seed search instead). Defaults give a full-period generator for a
+    power-of-two ``M`` (Hull-Dobell: ``a = 1 mod 4``, ``c`` odd).
+    """
+
+    def __init__(self, n_channels: int, mult: int, incr: int, seed: int):
+        super().__init__(n_channels)
+        self.m = int(n_channels)
+        self.a = int(mult) % self.m
+        self.c = int(incr) % self.m
+        self._seed = int(seed) % self.m
+        self.x = self._seed
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               mult: int = 5, incr: int = 3, seed: int | None = None):
+        rng = rng or np.random.default_rng()
+        if seed is None:
+            seed = int(rng.integers(0, n_channels))
+        return cls(n_channels=n_channels, mult=mult, incr=incr, seed=seed)
+
+    def reset(self) -> None:
+        self.x = self._seed
+
+    def next_channel(self) -> int:
+        self.x = (self.a * self.x + self.c) % self.m
+        return self.x
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels,
+                "modulus": self.m, "mult": self.a, "incr": self.c}
