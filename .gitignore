@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Generated experiment outputs (regenerate with: python -m scripts.run_all)
+results/
+data/*.json
+
+# Keep the data/ directory itself
+!data/.gitkeep
+
+# venv / tooling
+.venv/
+venv/
+.DS_Store

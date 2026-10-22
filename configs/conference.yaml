@@ -1,0 +1,41 @@
+# Conference-paper default configuration.
+# Sensor-aware Bayesian hypothesis bank for FH generator identification.
+# Every number here is a knob the experiments read; seeds are fixed for
+# reproducibility (paper Section 11, "Reproducibility and ethics").
+
+name: conference
+
+# --- gym ---
+n_channels: 16          # power-of-two channel set C (|C| = M)
+window: 100             # short engagement window T, in slots
+seeds: 30               # >= 30 seeds per condition (paper Section 11, "Rigor")
+
+# --- sensor sweeps (paper Section 4) ---
+# P_d and P_fa are used twice: to generate observations and inside every
+# likelihood. Label each as calibrated or assumed next to the result.
+p_d_grid:  [1.0, 0.9, 0.8, 0.7, 0.6, 0.5]
+p_fa_grid: [0.0, 0.01, 0.02, 0.05, 0.1]
+
+# --- hypothesis bank (recce prior ranges; H_0 is added automatically) ---
+bank:
+  include_markov: true
+  stopping: { kind: msprt, delta: 0.05 }   # or { kind: eprocess, beta: 0.05 }
+  emission: { kind: sensor_aware }         # or { kind: naive } for the ablation
+  h0_mode: uniform                         # uniform | occupancy | markov
+  specs:
+    - { label: lfsr,      family: lfsr,      kind: deterministic, grid: { length: [5, 6, 7] } }
+    - { label: weak_seed, family: weak_seed, kind: deterministic, grid: { keyspace: 256 } }
+    - { label: lcg,       family: lcg,       kind: deterministic, grid: { seed_max: 1024 } }
+    - { label: markov,    family: markov,    kind: markov,        options: { alpha: 1.0 } }
+
+# --- adversaries used as episodes (truth side; never seen by the bank) ---
+# in-bank families should be identified; out-of-bank must route to H_0.
+adversaries:
+  - { name: lfsr,          in_bank: true }
+  - { name: weak_seed,     in_bank: true }
+  - { name: lcg,           in_bank: true }
+  - { name: markov,        in_bank: true }
+  - { name: csprng,        in_bank: false }   # unpredictability ceiling -> H_0
+  - { name: filtered_lfsr, in_bank: false }   # predictability boundary case
+
+output_dir: results

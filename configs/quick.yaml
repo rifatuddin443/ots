@@ -1,0 +1,27 @@
+# Fast smoke configuration: fewer seeds, same structure as conference.yaml.
+# Use for a quick end-to-end check, not for reportable numbers.
+
+name: quick
+n_channels: 16
+window: 60
+seeds: 8
+p_d_grid:  [1.0, 0.8, 0.6]
+p_fa_grid: [0.0, 0.02, 0.05]
+
+bank:
+  include_markov: true
+  stopping: { kind: msprt, delta: 0.05 }
+  emission: { kind: sensor_aware }
+  h0_mode: uniform
+  specs:
+    - { label: lfsr,      family: lfsr,      kind: deterministic, grid: { length: [5, 6, 7] } }
+    - { label: weak_seed, family: weak_seed, kind: deterministic, grid: { keyspace: 256 } }
+    - { label: lcg,       family: lcg,       kind: deterministic, grid: { seed_max: 512 } }
+    - { label: markov,    family: markov,    kind: markov,        options: { alpha: 1.0 } }
+
+adversaries:
+  - { name: lfsr,          in_bank: true }
+  - { name: weak_seed,     in_bank: true }
+  - { name: csprng,        in_bank: false }
+
+output_dir: results
