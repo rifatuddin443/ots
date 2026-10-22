@@ -90,6 +90,8 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
 | `exp9_eprocess_bound` | §10 | Empirical false-ID stays under the nominal Ville bound |
 | `exp10_calibration` | §11 metrics | Posterior reliability diagram + ECE |
 | `exp11_stopping_law` | §10 | E[τ] ∝ log(1/δ) and ∝ 1/`P_d` (detection thinning) |
+| `exp12_full_bank_confusion` | thesis §5 | Full expert-bank coverage confusion matrix (every expert fires on its target) |
+| `exp13_coverage` | thesis §5 | Large-scale per-type identification over the whole library (7,500 episodes) |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -103,6 +105,42 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
   gap-robust state-filtered variant stays at 100% recovery.
 - The e-process false-identification rate stays under the nominal `β` line.
 
+## The full thesis expert bank (beyond the conference slice)
+
+The conference paper (exp1–exp11) uses one hypothesis per family. The **full
+thesis expert bank** (thesis §5) implements every expert in the expert table,
+each identifying its target across the whole generator library:
+
+| Expert | Target | Implemented as |
+| --- | --- | --- |
+| Hypothesis bank | known candidates | `HypothesisBank` (posterior + MSPRT / e-process) |
+| Berlekamp-Massey | LFSR | `AlgebraicLFSRHypothesis` (collapsing, needs ~2L clean *consecutive*) |
+| State-filtered BM | LFSR through gaps | `DeterministicHypothesis` (particle filter over register states) |
+| LCG cryptanalysis | linear congruential | `LCGCryptanalysisHypothesis` (algebraic `(a,c)` recovery on `lcg_full`) |
+| Seed search | weak-seed PRNG | `DeterministicHypothesis` over the keyspace |
+| Correlation attack | filtered LFSR | `DeterministicHypothesis` enumerating a known filter family's state |
+| Parametric chaos ID | logistic / tent / Hénon | `MixtureHMMHypothesis` over induced symbolic-dynamics transitions |
+| Phase-space predictor | unknown chaotic | `PhaseSpacePredictorHypothesis` (delay embedding + kNN) |
+| Markov / n-gram | empirical regularity | `MarkovHypothesis` |
+| Zero-shot neural | any learnable, gap-robust | `ContextMixingHypothesis` (training-free variable-order mixture) |
+| Behaviour model | reactive / learned policy | `BehaviourHypothesis` (recency-weighted; reduced TD-MPC2 stand-in) |
+| Prior-weighted barrage | none assumed | `BarrageHypothesis` (the zero-hop floor) |
+
+Build it with `fhew.config.identification_bank_specs(M)` (one best expert per
+family) or `full_bank_specs(M)` (all experts, for the coverage matrix).
+
+### Full-bank findings (exp12 / exp13, 7,500-episode sweep)
+
+- Every family is identified: at `P_d=0.95` the correct expert wins on **100%**
+  of episodes for all 9 identifiable families; CSPRNG routes to `H_0`.
+- Across 10 families × 5 `P_d` × 3 `P_fa` × 50 seeds, per-type accuracy stays
+  **≥0.92** (LFSR/filtered-LFSR/LCG/weak-seed/chaos ≈ 1.0), with **hard
+  (algebraic) false-ID ≤0.05 everywhere, mostly ≤0.01**.
+- `lcg_full` degrades gracefully at low `P_d` (its period-16 cycle at `M=16` is
+  legitimately caught by the Markov expert — a soft, non-dangerous miss).
+- The chaotic maps (logistic, tent, Hénon) are all identified by the single
+  parametric-chaos-ID expert, which recovers the map parameter.
+
 ---
 
 ## Package layout
@@ -115,20 +153,21 @@ fhew.generators import make_generator` still works).
 fhew/
   channels.py        channel set C
   sensor.py          detection-level sensor + frozen observation schema v1
-  generators.py      LFSR, filtered-LFSR, LCG, weak-seed, Markov, CSPRNG (registry)
+  generators.py      LFSR, filtered-LFSR, LCG, full-state LCG, weak-seed, Markov,
+                     chaotic maps (logistic/tent/Hénon), CSPRNG (registry)
   recovery.py        Berlekamp-Massey + bit/channel expansion
   likelihood.py      reduced emission (sensor-aware / naive) + forward filter
-  experts.py         Expert interface, hypotheses, H_0, the bank
+  experts.py         Expert interface, the full thesis expert bank, H_0, the bank
   stopping.py        MSPRT + e-process
   baselines.py       pairwise SPRT, fixed-length LRT, learned classifier (+ LSTM)
   sim.py             episode + end-to-end slot loop (paper Algorithm 1)
   metrics.py         identification / calibration / next-hop + CIs + significance
-  config.py          dataclasses, YAML, bank builders
+  config.py          dataclasses, YAML, bank builders (conference / id / full)
   datagen.py         training data + parameter grounding provenance
 configs/             conference.yaml, quick.yaml
-experiments/         exp1..exp11 + shared style/harness
+experiments/         exp1..exp13 + shared style/harness
 scripts/run_all.py   run everything
-tests/test_fhew.py   46 tests incl. the information-parity audit
+tests/test_fhew.py   61 tests incl. the information-parity audit
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)

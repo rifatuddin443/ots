@@ -419,6 +419,39 @@ def test_full_bank_identifies_every_family(gen):
     assert hits >= 2  # identified in a clear majority of seeds
 
 
+def test_nexthop_is_one_step_ahead_not_lagged():
+    # Regression: the bank's next-hop must predict s_{t+1}, not echo s_t. On a
+    # deterministic target the winning expert should predict the true next
+    # channel ~perfectly once it has locked, for both a collapsing expert
+    # (LCG cryptanalysis) and an online predictor (context mixing).
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(1.0, 0.0)
+
+    def steady_top1(spec, gen, kw, seq=None):
+        from fhew.experts import H0Hypothesis, HypothesisBank, build_hypothesis
+        bank = HypothesisBank(ch, H0Hypothesis(ch, mode="uniform"),
+                              [build_hypothesis(spec, ch, 60)], sensor=sensor)
+        rng = np.random.default_rng(7)
+        if seq is None:
+            ep = make_episode(gen, ch, sensor, 60, rng, gen_params=kw)
+            obs, true = ep.observations, ep.true_channels
+        else:
+            true = np.asarray(seq)
+            obs = sensor.observe(true, ch, rng)
+        hits = []
+        for t, o in enumerate(obs):
+            bank.update(o)
+            if t < len(true) - 1:
+                hits.append(int(np.argmax(bank.predict())) == int(true[t + 1]))
+        return float(np.mean(hits[-15:]))
+
+    from fhew.experts import HypothesisSpec
+    assert steady_top1(HypothesisSpec("lcg_full", "lcg_full", "lcg_crypto"), "lcg_full", {}) == 1.0
+    assert steady_top1(HypothesisSpec("cm", "markov", "context_mixing",
+                                      options={"max_order": 3}), None, {},
+                       seq=[0, 1] * 30) == 1.0
+
+
 def test_csprng_routes_to_unknown_in_full_bank():
     ch = ChannelSet.of_size(M)
     sensor = SensorModel(0.9, 0.02)

@@ -254,7 +254,11 @@ class _PredictorHypothesis(Hypothesis):
     def observe_clean(self, channel: int | None) -> None:
         if channel is not None:
             self._ingest(int(channel))
+        # self.prior now holds P(s_{t+1} | clean_{1:t}); surface it as the
+        # next-hop (step() could only offer the current-slot prediction, since it
+        # runs before this slot's clean channel is known).
         self.prior = self._predict_next_dist()
+        self._last_predict = self.prior.copy()
 
     def predict_next(self) -> np.ndarray:
         return self._last_predict
@@ -568,10 +572,11 @@ class AlgebraicLFSRHypothesis(Hypothesis):
 
     def step(self, log_emission: np.ndarray) -> StepResult:
         if self._recovered:
-            ch = self._channel_at(self.t)
-            pred = np.zeros(self.M)
-            pred[ch] = 1.0
+            ch = self._channel_at(self.t)                 # current slot: for loglik
             loglik = float(log_emission[ch])
+            nxt = self._channel_at(self.t + 1)            # next slot: for the predictive
+            pred = np.zeros(self.M)
+            pred[nxt] = 1.0
         else:
             pred = self.channels.uniform()
             m = float(np.max(log_emission))
@@ -676,10 +681,11 @@ class LCGCryptanalysisHypothesis(Hypothesis):
         if self._recovered and self._last_known_slot is not None:
             state = self._last_known_state
             for _ in range(self.t - self._last_known_slot):
-                state = (self._a * state + self._c) % self.M
-            pred = np.zeros(self.M)
-            pred[state] = 1.0
+                state = (self._a * state + self._c) % self.M   # state at current slot t
             loglik = float(log_emission[state])
+            nxt = (self._a * state + self._c) % self.M         # state at slot t+1
+            pred = np.zeros(self.M)
+            pred[nxt] = 1.0
         else:
             pred = self.channels.uniform()
             m = float(np.max(log_emission))
@@ -690,17 +696,29 @@ class LCGCryptanalysisHypothesis(Hypothesis):
         return StepResult(loglik=loglik, predict_next=pred)
 
     def observe_clean(self, channel: int | None) -> None:
-        if channel is not None:
-            self._clean[self.t - 1] = int(channel)
-            self._last_known_slot = self.t - 1
+        if channel is None:
+            return
+        slot = self.t - 1
+        self._clean[slot] = int(channel)
+        if not self._recovered:
+            self._last_known_slot = slot
             self._last_known_state = int(channel)
-            if not self._recovered:
-                run = _longest_clean_run(self._clean)
-                if run is not None and len(run[1]) >= self.min_run:
-                    res = recover_lcg_full(run[1], self.M)
-                    if res is not None:
-                        self._a, self._c = res
-                        self._recovered = True
+            run = _longest_clean_run(self._clean)
+            if run is not None and len(run[1]) >= self.min_run:
+                res = recover_lcg_full(run[1], self.M)
+                if res is not None:
+                    self._a, self._c = res
+                    self._recovered = True
+        elif self._last_known_slot is not None:
+            # Already recovered: only re-anchor when the clean channel agrees with
+            # the recurrence. A lone false-alarm detection would otherwise corrupt
+            # the anchor; keep rolling from the last trusted state instead.
+            predicted = self._last_known_state
+            for _ in range(slot - self._last_known_slot):
+                predicted = (self._a * predicted + self._c) % self.M
+            if int(channel) == predicted:
+                self._last_known_slot = slot
+                self._last_known_state = int(channel)
 
     def predict_next(self) -> np.ndarray:
         return self._last_predict
@@ -852,7 +870,7 @@ def build_hypothesis(spec: HypothesisSpec, channels: ChannelSet, horizon: int,
                                        max_length=spec.options.get("max_length", 9))
     if spec.kind == "lcg_crypto":
         return LCGCryptanalysisHypothesis(spec.label, channels,
-                                          min_run=spec.options.get("min_run", 4))
+                                          min_run=spec.options.get("min_run", 6))
     if spec.kind == "deterministic":
         builder = _TRAJ_BUILDERS.get(spec.family)
         if builder is not None:
@@ -1070,11 +1088,16 @@ class HypothesisBank(Expert):
         for k, h in enumerate(self._hyps):
             res = h.step(log_e)
             self.cum_loglik[k] += res.loglik
-            self._next_hops[k] = res.predict_next
             # Feed online-fitted hypotheses (Markov / learned H_0) *after* scoring.
             observe_clean = getattr(h, "observe_clean", None)
             if observe_clean is not None:
                 observe_clean(clean)
+            # Read the next-hop AFTER observe_clean: the online predictor experts
+            # can only form the genuine P(s_{t+1} | o_{1:t}) once they have ingested
+            # this slot's clean channel. Deterministic/Markov/H_0 set predict_next
+            # in step() and observe_clean leaves it untouched, so this is correct
+            # and uniform across every expert.
+            self._next_hops[k] = h.predict_next()
         self.t += 1
         # Bank's one-step mixture predictive log-likelihood (for a log-loss mixer).
         new_logpost = self.log_prior + self.cum_loglik
