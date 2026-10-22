@@ -107,24 +107,28 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
 
 ## Package layout
 
+Each concern is a single flat module in `fhew/` (the former subpackages were
+merged into one file each; public import paths are unchanged — `from
+fhew.generators import make_generator` still works).
+
 ```
 fhew/
   channels.py        channel set C
   sensor.py          detection-level sensor + frozen observation schema v1
-  generators/        LFSR, filtered-LFSR, LCG, weak-seed, Markov, CSPRNG (registry)
-  recovery/          Berlekamp-Massey + bit/channel expansion
-  likelihood/        reduced emission (sensor-aware / naive) + forward filter
-  experts/           Expert interface, hypotheses, H_0, the bank
+  generators.py      LFSR, filtered-LFSR, LCG, weak-seed, Markov, CSPRNG (registry)
+  recovery.py        Berlekamp-Massey + bit/channel expansion
+  likelihood.py      reduced emission (sensor-aware / naive) + forward filter
+  experts.py         Expert interface, hypotheses, H_0, the bank
   stopping.py        MSPRT + e-process
-  baselines/         pairwise SPRT, fixed-length LRT, learned classifier (+ LSTM)
-  sim/               episode + end-to-end slot loop (paper Algorithm 1)
-  metrics/           identification / calibration / next-hop + CIs + significance
+  baselines.py       pairwise SPRT, fixed-length LRT, learned classifier (+ LSTM)
+  sim.py             episode + end-to-end slot loop (paper Algorithm 1)
+  metrics.py         identification / calibration / next-hop + CIs + significance
   config.py          dataclasses, YAML, bank builders
   datagen.py         training data + parameter grounding provenance
 configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp11 + shared style/harness
 scripts/run_all.py   run everything
-tests/               46 tests incl. the information-parity audit
+tests/test_fhew.py   46 tests incl. the information-parity audit
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)

@@ -18,11 +18,11 @@ from experiments import common as C
 from experiments import style
 from fhew.baselines import FixedLengthTest, LearnedClassifier, PairwiseSPRT
 from fhew.channels import ChannelSet
-from fhew.likelihood.emission import SensorAwareEmission
+from fhew.likelihood import SensorAwareEmission
 from fhew.logging_utils import load_json, save_json
 from fhew.metrics import mcnemar_test, paired_bootstrap_diff, summarize
 from fhew.sensor import SensorModel
-from fhew.sim.engine import run_bank, run_fixed_length, run_learned, run_sprt
+from fhew.sim import run_bank, run_fixed_length, run_learned, run_sprt
 
 NAME = "exp3_method_comparison"
 
@@ -39,7 +39,7 @@ def compute(*, M=C.DEFAULT_M, window=C.DEFAULT_WINDOW, n_seeds=30, p_d=0.8, p_fa
     bank = C.make_bank(ch, window, sensor, specs)
 
     # Build fresh hypothesis objects per method (stateful, not shared with the bank).
-    from fhew.experts.hypothesis import build_hypothesis
+    from fhew.experts import build_hypothesis
     sprt = PairwiseSPRT([build_hypothesis(s, ch, window) for s in specs], emit, M)
     fixedl = FixedLengthTest([build_hypothesis(s, ch, window) for s in specs], emit, M,
                              n_fixed=30)

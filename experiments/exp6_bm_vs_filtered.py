@@ -17,12 +17,12 @@ import numpy as np
 from experiments import common as C
 from experiments import style
 from fhew.channels import ChannelSet
-from fhew.experts.hypothesis import build_hypothesis, HypothesisSpec
-from fhew.likelihood.emission import SensorAwareEmission
+from fhew.experts import build_hypothesis, HypothesisSpec
+from fhew.likelihood import SensorAwareEmission
 from fhew.logging_utils import load_json, save_json
 from fhew.recovery import recover_and_predict
 from fhew.sensor import SensorModel, clean_subsequence
-from fhew.sim.episode import make_episode
+from fhew.sim import make_episode
 
 NAME = "exp6_bm_vs_filtered"
 

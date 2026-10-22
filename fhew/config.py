@@ -15,10 +15,10 @@ import numpy as np
 import yaml
 
 from fhew.channels import ChannelSet
-from fhew.experts.bank import HypothesisBank
-from fhew.experts.h0 import H0Hypothesis
-from fhew.experts.hypothesis import HypothesisSpec, build_hypothesis
-from fhew.likelihood.emission import make_emission
+from fhew.experts import HypothesisBank
+from fhew.experts import H0Hypothesis
+from fhew.experts import HypothesisSpec, build_hypothesis
+from fhew.likelihood import make_emission
 from fhew.sensor import SensorModel
 from fhew.stopping import make_stopping_rule
 

@@ -1,17 +1,80 @@
-"""The forward filter: per-slot sensor-aware likelihood and next-hop predictive.
+"""Sensor-aware likelihood: emission strategies and the forward filter.
 
-Both filters return, for each slot, the *reduced* per-slot log-likelihood
-
-    log L_t = log E_prior[ ratio(s) ] = log P(o_t | H_k, o_{1:t-1}) - log F_t,
-
-where the common all-false-alarm constant ``F_t`` was already removed by the
-emission model. ``F_t`` is identical for every hypothesis and every slot, so it
-cancels in the bank posterior and in all likelihood ratios; working with the
-reduced quantity keeps everything numerically stable (paper Section 6).
+This module merges what used to be the fhew/likelihood/ subpackage; the public
+names are unchanged, so `from fhew.likelihood import X` still works.
 """
 
 from __future__ import annotations
 
+# ---- merged from fhew/likelihood/emission.py ----
+import abc
+
+import numpy as np
+
+from fhew.sensor import Observation, SensorModel
+
+
+class EmissionModel(abc.ABC):
+    """Maps an observation to a reduced log-emission vector over channels."""
+
+    name: str = "base"
+
+    @abc.abstractmethod
+    def log_emission(self, obs: Observation) -> np.ndarray:
+        ...
+
+
+class SensorAwareEmission(EmissionModel):
+    """The method: emission built from the sensor's ``P_d`` and ``P_fa``.
+
+    Gaps (missed hops) and phantoms (false alarms) are handled inside the
+    likelihood instead of corrupting it. Delegates to
+    :meth:`SensorModel.emission_loglikelihood`.
+    """
+
+    name = "sensor_aware"
+
+    def __init__(self, sensor: SensorModel):
+        self.sensor = sensor
+
+    def log_emission(self, obs: Observation) -> np.ndarray:
+        return self.sensor.emission_loglikelihood(obs)
+
+
+class NaiveEmission(EmissionModel):
+    """The baseline: ignore ``P_d`` / ``P_fa`` and score only clean matches.
+
+    A channel that produced a detection scores ``log 1 = 0``; a channel with no
+    detection scores ``log(eps_miss)``. There is no false-alarm discounting, so a
+    missed true hop is (wrongly) treated as evidence against the true generator
+    and a phantom as evidence for a wrong one. The gap to
+    :class:`SensorAwareEmission`, measured as hops-to-identify and false-ID rate,
+    is the ablation that justifies the sensor-aware approach.
+    """
+
+    name = "naive"
+
+    def __init__(self, eps_miss: float = 1e-3):
+        if not 0.0 < eps_miss < 1.0:
+            raise ValueError("eps_miss must be in (0, 1)")
+        self.log_eps = float(np.log(eps_miss))
+
+    def log_emission(self, obs: Observation) -> np.ndarray:
+        detected = obs.detection_mask()
+        log_e = np.full(obs.n_channels, self.log_eps, dtype=np.float64)
+        log_e[detected] = 0.0
+        return log_e
+
+
+def make_emission(kind: str, sensor: SensorModel, **kwargs) -> EmissionModel:
+    """Factory used by configs: ``'sensor_aware'`` or ``'naive'``."""
+    if kind == "sensor_aware":
+        return SensorAwareEmission(sensor)
+    if kind == "naive":
+        return NaiveEmission(**kwargs)
+    raise ValueError(f"unknown emission kind '{kind}'")
+
+# ---- merged from fhew/likelihood/forward.py ----
 import abc
 from dataclasses import dataclass
 

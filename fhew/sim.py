@@ -1,23 +1,79 @@
-"""The end-to-end slot loop (paper Section 9) and per-method runners.
+"""The FH-EW gym core: episodes and the end-to-end slot loop.
 
-``run_bank`` is the paper's Algorithm 1: for each slot, observe, score every
-hypothesis through the sensor-aware forward update, do the Bayesian update,
-form the posterior-weighted next-hop, and test the stop rule. The baseline
-runners drive the same episodes so every method is compared on identical data.
+This module merges what used to be the fhew/sim/ subpackage; the public
+names are unchanged, so `from fhew.sim import X` still works.
 """
 
 from __future__ import annotations
 
+# ---- merged from fhew/sim/episode.py ----
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from fhew.baselines.fixed_length import FixedLengthTest
-from fhew.baselines.learned import LearnedClassifier
-from fhew.baselines.pairwise_sprt import PairwiseSPRT
-from fhew.experts.bank import UNKNOWN_LABEL, HypothesisBank
+from fhew.channels import ChannelSet
+from fhew.generators import Generator, make_generator
+from fhew.sensor import Observation, SensorModel
+
+UNKNOWN_LABEL = "unknown"
+
+
+@dataclass
+class Episode:
+    true_label: str                     # the generator family that produced it
+    true_channels: np.ndarray           # hidden ground-truth channel sequence
+    observations: list[Observation]     # the lossy stream (all the bank sees)
+    window: int
+    channels: ChannelSet
+    p_d: float
+    p_fa: float
+    seed: int
+    gen_params: dict = field(default_factory=dict)
+    target_label: str = ""              # what a correct system should output
+
+    def set_target(self, in_bank_labels: set[str]) -> "Episode":
+        self.target_label = self.true_label if self.true_label in in_bank_labels else UNKNOWN_LABEL
+        return self
+
+
+def make_episode(
+    gen_name: str,
+    channels: ChannelSet,
+    sensor: SensorModel,
+    window: int,
+    rng: np.random.Generator,
+    *,
+    gen_params: dict | None = None,
+    seed: int | None = None,
+    label: str | None = None,
+) -> Episode:
+    """Draw a generator, run it for ``window`` slots, and sense it."""
+    gen_params = dict(gen_params or {})
+    g: Generator = make_generator(gen_name, channels.size, rng=rng, **gen_params)
+    true = g.sequence(window)
+    obs = sensor.observe(true, channels, rng)
+    return Episode(
+        true_label=label or gen_name,
+        true_channels=true,
+        observations=obs,
+        window=window,
+        channels=channels,
+        p_d=sensor.p_d,
+        p_fa=sensor.p_fa,
+        seed=int(seed) if seed is not None else -1,
+        gen_params=gen_params,
+    )
+
+# ---- merged from fhew/sim/engine.py ----
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from fhew.baselines import FixedLengthTest
+from fhew.baselines import LearnedClassifier
+from fhew.baselines import PairwiseSPRT
+from fhew.experts import UNKNOWN_LABEL, HypothesisBank
 from fhew.logging_utils import RunLogger
-from fhew.sim.episode import Episode
 
 
 @dataclass

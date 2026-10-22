@@ -24,10 +24,10 @@ from experiments import common as C
 from experiments import style
 from fhew.channels import ChannelSet
 from fhew.config import in_bank_labels
-from fhew.experts.hypothesis import HypothesisSpec
+from fhew.experts import HypothesisSpec
 from fhew.logging_utils import load_json, save_json
 from fhew.sensor import SensorModel
-from fhew.sim.engine import run_bank
+from fhew.sim import run_bank
 
 NAME = "exp9_eprocess_bound"
 

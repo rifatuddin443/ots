@@ -8,9 +8,9 @@ import numpy as np
 
 from fhew.channels import ChannelSet
 from fhew.config import build_bank, default_bank_specs, in_bank_labels
-from fhew.experts.hypothesis import HypothesisSpec
+from fhew.experts import HypothesisSpec
 from fhew.sensor import SensorModel
-from fhew.sim.episode import Episode, make_episode
+from fhew.sim import Episode, make_episode
 
 RESULTS_DIR = Path("results")
 FIG_DIR = RESULTS_DIR / "figures"

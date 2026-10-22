@@ -1,16 +1,12 @@
 """Berlekamp-Massey over GF(2) and LFSR prediction from observed channels.
 
-Plain Berlekamp-Massey recovers the shortest linear recurrence generating a
-bit stream and needs about ``2L`` clean consecutive outputs for a length-``L``
-register (paper Sections 6 and 10). It assumes clean consecutive outputs, so it
-breaks under any missed detection; the gap-robust *state-filtered* variant is
-realised by the LFSR hypothesis in ``fhew.experts`` as a particle filter over
-register states. This module is the pure algebraic core, independent of the
-sensor model, so it can be unit-tested and reported on its own.
+This module merges what used to be the fhew/recovery/ subpackage; the public
+names are unchanged, so `from fhew.recovery import X` still works.
 """
 
 from __future__ import annotations
 
+# ---- merged from fhew/recovery/berlekamp_massey.py ----
 from dataclasses import dataclass
 
 import numpy as np

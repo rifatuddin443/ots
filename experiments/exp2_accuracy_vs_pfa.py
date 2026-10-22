@@ -16,7 +16,7 @@ from fhew.channels import ChannelSet
 from fhew.logging_utils import load_json, save_json
 from fhew.metrics import summarize
 from fhew.sensor import SensorModel
-from fhew.sim.engine import run_bank
+from fhew.sim import run_bank
 
 NAME = "exp2_accuracy_vs_pfa"
 

@@ -16,11 +16,11 @@ from experiments import common as C
 from experiments import style
 from fhew.baselines import PairwiseSPRT
 from fhew.channels import ChannelSet
-from fhew.experts.hypothesis import build_hypothesis
-from fhew.likelihood.emission import SensorAwareEmission
+from fhew.experts import build_hypothesis
+from fhew.likelihood import SensorAwareEmission
 from fhew.logging_utils import load_json, save_json
 from fhew.sensor import SensorModel
-from fhew.sim.engine import run_bank, run_sprt
+from fhew.sim import run_bank, run_sprt
 
 NAME = "exp4_none_of_the_above"
 

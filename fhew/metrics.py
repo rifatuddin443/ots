@@ -1,12 +1,17 @@
-"""Identification metrics with confidence intervals and significance tests."""
+"""Metrics: identification, calibration, and next-hop prediction (+ CIs and significance).
+
+This module merges what used to be the fhew/metrics/ subpackage; the public
+names are unchanged, so `from fhew.metrics import X` still works.
+"""
 
 from __future__ import annotations
 
+# ---- merged from fhew/metrics/identification.py ----
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from fhew.sim.engine import EpisodeResult
+from fhew.sim import EpisodeResult
 
 
 @dataclass
@@ -113,3 +118,57 @@ def mcnemar_test(results_a: list[EpisodeResult], results_b: list[EpisodeResult])
         return {"b01": 0, "b10": 0, "p_value": 1.0}
     p = binomtest(b01, disc, 0.5).pvalue
     return {"b01": b01, "b10": b10, "p_value": float(p)}
+
+# ---- merged from fhew/metrics/calibration.py ----
+import numpy as np
+
+
+def reliability_curve(confidences, correct, n_bins: int = 10):
+    """Return ``(bin_centers, bin_accuracy, bin_confidence, bin_count)``."""
+    conf = np.asarray(confidences, dtype=np.float64)
+    corr = np.asarray(correct, dtype=np.float64)
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    acc = np.full(n_bins, np.nan)
+    avg_conf = np.full(n_bins, np.nan)
+    count = np.zeros(n_bins, dtype=np.int64)
+    idx = np.clip(np.digitize(conf, edges) - 1, 0, n_bins - 1)
+    for b in range(n_bins):
+        mask = idx == b
+        count[b] = int(mask.sum())
+        if count[b] > 0:
+            acc[b] = float(corr[mask].mean())
+            avg_conf[b] = float(conf[mask].mean())
+    return centers, acc, avg_conf, count
+
+
+def ece(confidences, correct, n_bins: int = 10) -> float:
+    """Expected calibration error: weighted mean ``|accuracy - confidence|``."""
+    conf = np.asarray(confidences, dtype=np.float64)
+    _, acc, avg_conf, count = reliability_curve(conf, correct, n_bins)
+    total = count.sum()
+    if total == 0:
+        return float("nan")
+    mask = count > 0
+    return float(np.sum(count[mask] / total * np.abs(acc[mask] - avg_conf[mask])))
+
+# ---- merged from fhew/metrics/prediction.py ----
+import numpy as np
+
+from fhew.sim import EpisodeResult
+
+
+def nexthop_summary(results: list[EpisodeResult]) -> dict:
+    """Aggregate next-hop log-loss and top-k hit rates over episodes."""
+    ll = np.array([r.nexthop_logloss for r in results], dtype=np.float64)
+    t1 = np.array([r.nexthop_top1 for r in results], dtype=np.float64)
+    t3 = np.array([r.nexthop_top3 for r in results], dtype=np.float64)
+    ll = ll[~np.isnan(ll)]
+    t1 = t1[~np.isnan(t1)]
+    t3 = t3[~np.isnan(t3)]
+    return {
+        "logloss": float(ll.mean()) if ll.size else float("nan"),
+        "top1": float(t1.mean()) if t1.size else float("nan"),
+        "top3": float(t3.mean()) if t3.size else float("nan"),
+        "n": int(ll.size),
+    }

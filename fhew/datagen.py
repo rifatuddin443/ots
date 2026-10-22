@@ -20,12 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
-from fhew.baselines.features import episode_features
-from fhew.baselines.learned import LearnedClassifier
+from fhew.baselines import episode_features
+from fhew.baselines import LearnedClassifier
 from fhew.channels import ChannelSet
 from fhew.logging_utils import save_json
 from fhew.sensor import SensorModel
-from fhew.sim.episode import make_episode
+from fhew.sim import make_episode
 
 # --------------------------------------------------------------------- grounding
 # source: 'calibrated:<dataset>' once tied to a measured range, else 'assumed'.
