@@ -133,10 +133,22 @@
   }
   /** Scoreboard row of one emitter for a filter value (null when absent). */
   const emitRow = (id, f) => S.byEmitter(f).find((r) => r.id === id) || null;
+  // "New algorithm" emitters (no expert in the bank) are kept out of the
+  // identification claims and get their own prediction claim.
+  const isNewId = (id) => S.isNewAlgo(id);
+  const knownRow = (r) => !isNewId(r.emitter);
+  /** Aggregate over the known patterns only (excludes new-algorithm emitters). */
+  const overK = (f = "all") => S.overallWhere(f, knownRow);
+  /** Aggregate over the new-algorithm emitters only. */
+  const overN = (f = "all") => S.overallWhere(f, (r) => isNewId(r.emitter));
+  /** Per-emitter scoreboard rows for the known patterns only. */
+  const byEmitterK = (f) => S.byEmitter(f).filter((r) => !isNewId(r.id));
+  /** Per-emitter scoreboard rows for the new-algorithm emitters only. */
+  const byEmitterNew = (f) => S.byEmitter(f).filter((r) => isNewId(r.id));
   /** Column categories for the per-condition charts: each preset, then "All conditions". */
   const condCats = () => [
     ...presetsByQuality().map((p) => ({ id: p.id, label: p.name, sub: "catches " + Math.round(p.p_d * 100) + "%" })),
-    { id: "all", label: "All conditions", sub: fmt.int(S.overall("all").n) + " runs" },
+    { id: "all", label: "All conditions", sub: fmt.int(overK("all").n) + " runs" },
   ];
   /** Highlight the filtered condition's column pair in a per-condition chart (survives redraws: pure CSS). */
   function highlight(box, cats) {
@@ -156,15 +168,22 @@
     mount(root) {
       injectCss();
       const handles = [], offs = [];
-      const DATA = OTS.data, sb = DATA.scoreboard, all = S.overall("all");
-      const nPat = OTS.emitters.length, nCond = OTS.presets.length, nSeeds = sb.n_seeds;
+      const DATA = OTS.data, sb = DATA.scoreboard;
+      // "New algorithm" emitters have no expert in the bank: they are kept out of
+      // the identification claims (1-7, about the known patterns) and get their
+      // own next-channel-prediction claim (8).
+      const knownEmitters = OTS.emitters.filter((e) => !e.new_algo);
+      const newEmitters = OTS.emitters.filter((e) => e.new_algo);
+      const all = overK("all");
+      const nPat = knownEmitters.length, nCond = OTS.presets.length, nSeeds = sb.n_seeds;
 
       // ------------------------------------------------------------ hero
       const hero = el("div", { class: "proof-hero" },
         el("h2", { class: "lead" }, "Not one lucky demo: ", el("em", {}, fmt.int(all.n) + " runs"), ", every one counted."),
         el("p", { class: "intro" },
           `Each run hides one of ${nPat} radio patterns behind a fresh random secret, heard through a sensor that misses hops and hears ghost signals. `,
-          "OTS and the standard test see exactly the same detections. Each card below makes one claim and shows the evidence."));
+          "OTS and the standard test see exactly the same detections. Each card below makes one claim and shows the evidence.",
+          newEmitters.length ? ` A final claim adds ${newEmitters.length} algorithms the bank has no expert for at all, to show the next channel is still predicted.` : ""));
 
       // ------------------------------------------------------ filter row
       const segBtns = [{ id: "all", name: "All conditions" }, ...presetsByQuality()].map((p) => el("button", {
@@ -184,7 +203,7 @@
       // ----------------------------------------------------------- tiles
       const tiles = el("div", { class: "proof-tiles", "aria-live": "polite" });
       function renderTiles() {
-        const o = S.overall(filter);
+        const o = overK(filter);
         const tile = (label, value, unit, sub) => el("div", { class: "tile" },
           el("div", { class: "tile-l" }, label),
           el("div", { class: "tile-v" }, value, unit ? el("small", {}, " " + unit) : null),
@@ -205,7 +224,7 @@
       A.d.textContent = "Each pair of columns is one kind of hidden radio. The columns count how often each method named the wrong pattern in 100 runs: shorter is better.";
       A.body.append(legend([sq("OTS", C().ots), sq("Standard test", C().base)], "▼ lower is better"), aBox, aNote);
       function specA() {
-        const rows = S.byEmitter(filter), by = new Map(rows.map((r) => [r.id, r]));
+        const rows = byEmitterK(filter), by = new Map(rows.map((r) => [r.id, r]));
         const wrong = (r, s) => 100 * (1 - (s === "ots" ? r.ots_acc : r.base_acc));
         return {
           height: 330, ariaLabel: "Wrong answers per 100 runs for each hidden pattern: OTS versus the standard test",
@@ -221,7 +240,7 @@
         };
       }
       function renderA() {
-        const o = S.overall(filter), wo = 1 - o.ots_acc, wb = 1 - o.base_acc;
+        const o = overK(filter), wo = 1 - o.ots_acc, wb = 1 - o.base_acc;
         const pre = filter === "all" ? "" : condName(filter) + " sensor: ";
         A.k.textContent = pre + (wo === 0 && wb > 0 ? `no wrong answers at all, against ${per(wb)} per 100 runs for the standard test`
           : wo < wb ? `${times(wb / wo)}× fewer wrong answers than the standard test: ${per(wo)} vs ${per(wb)} per 100 runs`
@@ -243,7 +262,7 @@
             lf.ots_fb === 0 ? "(no false claims on this pattern)." : `(false claims on this pattern: ${per(lf.ots_fb)} per 100).`,
             lf.base_acc >= lf.ots_acc ? ` The standard test does no better here (${per(1 - lf.base_acc)} wrong per 100).` : ""));
         }
-        const rows = S.byEmitter(filter);
+        const rows = byEmitterK(filter);
         A.foot.textContent = `${fmt.int(o.n)} runs on ${condPhrase(filter)}: ${nPat} patterns × ${filter === "all" ? nCond + " conditions × " : ""}${nSeeds} seeds each. Every run counted, none hand-picked.`;
         A.table = () => table(`Wrong answers per 100 runs · ${condName(filter)}`,
           [{ h: "Hidden pattern" }, { h: "Runs" }, { h: "OTS", us: true }, { h: "Standard test" }],
@@ -256,7 +275,7 @@
       B.d.textContent = "A dangerous false claim is announcing “I have cracked this code” when the radio actually uses something else. Anyone acting on it would follow the wrong channels.";
       B.body.append(legend([sq("OTS", C().ots), sq("Standard test", C().base)], "▼ lower is better"), bBox);
       function specB() {
-        const cats = condCats(), agg = new Map(cats.map((c) => [c.id, S.overall(c.id)]));
+        const cats = condCats(), agg = new Map(cats.map((c) => [c.id, overK(c.id)]));
         const v = (id, s) => 100 * (s === "ots" ? agg.get(id).ots_fb : agg.get(id).base_fb);
         return {
           height: 290, ariaLabel: "Dangerous false claims per 100 runs for each sensor condition: OTS versus the standard test",
@@ -270,7 +289,7 @@
         };
       }
       function renderB() {
-        const o = S.overall(filter), on = filter === "all" ? "" : ` with the ${condName(filter)} sensor`;
+        const o = overK(filter), on = filter === "all" ? "" : ` with the ${condName(filter)} sensor`;
         B.k.textContent = o.ots_fb === 0 && o.base_fb > 0 ? `No dangerous false claims at all${on}, against ${per(o.base_fb)} per 100 runs for the standard test`
           : o.ots_fb < o.base_fb ? `${times(o.base_fb / o.ots_fb)}× fewer${on}: ${per(o.ots_fb)} per 100 runs, against ${per(o.base_fb)} for the standard test`
           : `${per(o.ots_fb)} per 100 runs for OTS${on}, ${per(o.base_fb)} for the standard test`;
@@ -279,7 +298,7 @@
           + (filter === "all" ? "Use the filter above to focus on one condition." : `Headline: the ${condName(filter)} sensor, ${fmt.int(o.n)} runs.`);
         B.table = () => table("Dangerous false claims per 100 runs",
           [{ h: "Sensor condition" }, { h: "Runs" }, { h: "OTS", us: true }, { h: "Standard test" }],
-          condCats().map((c) => { const a = S.overall(c.id); return [c.label, fmt.int(a.n), capLabel(100 * a.ots_fb), capLabel(100 * a.base_fb)]; }));
+          condCats().map((c) => { const a = overK(c.id); return [c.label, fmt.int(a.n), capLabel(100 * a.ots_fb), capLabel(100 * a.base_fb)]; }));
       }
 
       // ========================================================= claim 3
@@ -324,7 +343,7 @@
       // ========================================================= claim 4
       const Dd = shell(4, "Still works as the sensor gets worse");
       const dAcc = el("div"), dHops = el("div");
-      const byP = () => presetsByQuality().map((p) => ({ ...p, ...S.overall(p.id) }));
+      const byP = () => presetsByQuality().map((p) => ({ ...p, ...overK(p.id) }));
       Dd.body.append(el("div", { class: "proof-pair" },
         el("div", {}, el("p", { class: "proof-ch" }, "Right answer ", el("small", {}, "· share of runs")),
           OTS.chart.legend([{ label: "OTS", color: C().ots }, { label: "Standard test", color: C().base }]), dAcc),
@@ -440,7 +459,7 @@
       const gBox = el("div");
       G.body.append(legend([sq("OTS", C().ots), sq("Frequency statistics", C().base), { label: `Random guess (${chanceTxt()})`, kind: "dash" }], "▲ higher is better"), gBox);
       function specG() {
-        const rows = S.byEmitter(filter), by = new Map(rows.map((r) => [r.id, r]));
+        const rows = byEmitterK(filter), by = new Map(rows.map((r) => [r.id, r]));
         return {
           height: 330, ariaLabel: "Share of next hops called correctly for each hidden pattern: OTS versus a frequency-statistics forecaster",
           categories: rows.map((r) => ({ id: r.id, label: r.name })),
@@ -457,17 +476,60 @@
         };
       }
       function renderG() {
-        const o = S.overall(filter), ch = S.chance(), pre = filter === "all" ? "" : condName(filter) + " sensor: ";
+        const o = overK(filter), ch = S.chance(), pre = filter === "all" ? "" : condName(filter) + " sensor: ";
         G.k.textContent = pre + `OTS calls ${pct0(o.top1)} of next hops right: ${times(o.top1 / o.markov_top1)}× as many as frequency statistics (${pct0(o.markov_top1)}) and ${times(o.top1 / ch)}× a random guess`;
         const cs = emitRow("csprng", filter);
         G.d.textContent = "Counted over each whole run, including the hops before OTS has locked on"
           + (o.top1_locked != null ? `; once locked, it calls ${pct0(o.top1_locked)} right.` : ".")
           + (cs && Math.abs(cs.top1 - ch) < 0.02 ? ` On the unbreakable ${csName} nobody beats a random guess, as it should be.` : "");
-        const rows = S.byEmitter(filter);
+        const rows = byEmitterK(filter);
         G.foot.textContent = `${fmt.int(o.n)} runs on ${condPhrase(filter)}; each run calls hops 2 to ${DATA.window}. Frequency statistics: the usual forecaster that counts which channel tends to follow which, on the same detections.`;
         G.table = () => table(`Next hop called right · ${condName(filter)}`,
           [{ h: "Hidden pattern" }, { h: "Runs" }, { h: "OTS whole run", us: true }, { h: "OTS after lock", us: true }, { h: "Frequency stats" }],
           rows.map((r) => [r.name, fmt.int(r.n), pct0(r.top1), r.top1_locked == null ? "never locked" : pct0(r.top1_locked), pct0(r.markov_top1)]));
+      }
+
+      // ========================================================= claim 8
+      const H = shell(8, "Predicts an algorithm it was never built for");
+      const hBox = el("div"), hVerd = el("div", { class: "proof-verdicts" });
+      H.body.append(legend([sq("OTS predictor · after it learns the rule", C().ots),
+        { label: `Random guess (${chanceTxt()})`, kind: "dash" }], "▲ higher is better"), hBox, hVerd);
+      const hasNew = () => byEmitterNew("all").length > 0;
+      function specH() {
+        const rows = byEmitterNew(filter), by = new Map(rows.map((r) => [r.id, r]));
+        return {
+          height: 300, ariaLabel: "Share of next hops the predictor calls right for each new algorithm the bank has no expert for",
+          categories: rows.map((r) => ({ id: r.id, label: r.name })),
+          series: [{ id: "pred", label: "OTS predictor", color: C().ots }],
+          value: (c) => 100 * (by.get(c).pred_top1_steady == null ? 0 : by.get(c).pred_top1_steady),
+          y: { label: "Next hop called right (%)", max: 100, ticks: [0, 25, 50, 75, 100], format: String },
+          x: { label: "New algorithm · no expert in the bank" }, barWidth: 28,
+          valueLabels: roomy(hBox, rows.length), valueFormat: (x) => String(Math.round(x)),
+          refLines: [{ y: 100 * S.chance() }],
+          tooltip: (c) => { const r = by.get(c.id); return { title: `${r.name} · ${condName(filter)}`, rows: [
+            { value: pct0(r.pred_top1_steady), label: "OTS predictor, after it learns", color: C().ots, kind: "square" },
+            { value: pct0(r.pred_top1), label: "OTS predictor, whole run" },
+            { value: pct0(r.ots_top1), label: "bank-only forecast" },
+            { value: chanceTxt(), label: "random guess" }] }; },
+        };
+      }
+      function renderH() {
+        const rows = byEmitterNew(filter);
+        if (!rows.length) { H.k.textContent = "No new-algorithm runs in this data."; return; }
+        const oN = overN(filter), ch = S.chance(), pre = filter === "all" ? "" : condName(filter) + " sensor: ";
+        const best = rows.reduce((a, b) => ((b.pred_top1_steady || 0) > (a.pred_top1_steady || 0) ? b : a));
+        H.k.textContent = pre + `With no expert for these schemes, OTS still calls ${pct0(oN.pred_top1_steady)} of next hops right once it has learned the rule`
+          + ` — up to ${pct0(best.pred_top1_steady)} on the ${best.name}, about ${times(oN.pred_top1_steady / ch)}× a random guess`;
+        if (!pre) H.k.textContent = H.k.textContent[0].toUpperCase() + H.k.textContent.slice(1);
+        H.d.textContent = "These schemes are held out of the bank entirely — nothing in it was built to recognise them, so OTS cannot reliably name which one it is. "
+          + "The universal predictor learns each one's rule from the hops it hears and forecasts the next channel anyway: not knowing the algorithm's name does not make the next hop unpredictable.";
+        fill(hVerd, rows.map((r) => status("good", "✓",
+          `${r.name}: ${pct0(r.pred_top1_steady)} of next hops called right, with no expert built for it`)));
+        H.foot.textContent = `${fmt.int(oN.n)} runs on ${condPhrase(filter)} across ${rows.length} schemes with no expert in the bank. `
+          + "“After it learns” counts hops in the second half of each run; the whole-run and bank-only forecast numbers are in the tooltip and table.";
+        H.table = () => table(`New-algorithm next-hop prediction · ${condName(filter)}`,
+          [{ h: "New algorithm" }, { h: "Runs" }, { h: "After it learns", us: true }, { h: "Whole run", us: true }, { h: "Bank-only forecast" }, { h: "Random guess" }],
+          rows.map((r) => [r.name, fmt.int(r.n), pct0(r.pred_top1_steady), pct0(r.pred_top1), pct0(r.ots_top1), chanceTxt()]));
       }
 
       // ---------------------------------------------------------- layout
@@ -477,8 +539,10 @@
         A.node, el("div", { class: "grid-2" }, B.node, Cc.node),
         section("When the sensor gets worse", "Real sensors miss hops and hear ghosts. These claims show what that does to each method."),
         Dd.node, el("div", { class: "grid-2" }, Ee.node, Ff.node),
-        section("Calling the next hop", "The payoff: once the pattern and its secret are known, every next hop can be predicted."),
-        G.node);
+        section("Calling the next hop", "The payoff of naming a pattern: once it and its secret are known, every next hop can be predicted."),
+        G.node,
+        hasNew() ? section("Predicting a brand-new algorithm", "The bank is limited by design. When the radio uses a scheme with no expert at all, naming it fails — yet the next channel can still be predicted.") : null,
+        hasNew() ? H.node : null);
       root.append(page);
 
       // charts mount after the page is in the DOM so they know their width
@@ -489,11 +553,12 @@
       if (abRows.length) mk(fBox, OTS.chart.line, specF);
       /** Column charts that follow the filter (and re-check value-label room on resize). */
       const filtered = [mk(aBox, OTS.chart.columns, specA), mk(bBox, OTS.chart.columns, specB),
-        mk(cBox, OTS.chart.columns, specC), mk(gBox, OTS.chart.columns, specG)];
+        mk(cBox, OTS.chart.columns, specC), mk(gBox, OTS.chart.columns, specG),
+        ...(hasNew() ? [mk(hBox, OTS.chart.columns, specH)] : [])];
       const redrawFiltered = () => { for (const c of filtered) c.h.update(c.spec()); };
 
       // ---------------------------------------------------------- render
-      const cards = [A, B, Cc, Dd, Ee, Ff, G];
+      const cards = [A, B, Cc, Dd, Ee, Ff, G, ...(hasNew() ? [H] : [])];
       function renderTables() {
         for (const c of cards) {
           c.tbl.hidden = !OTS.prefs.tables || !c.table;
@@ -510,6 +575,7 @@
         barHelp.textContent = p ? `Catches ${Math.round(p.p_d * 100)}% of hops · ~${ghosts(p.p_fa)} ghosts per hop`
           : `${fmt.int(all.n)} runs, ${nCond} sensors, strong to contested`;
         renderTiles(); renderA(); renderB(); renderC(); renderG();
+        if (hasNew()) renderH();
         redrawFiltered();
         renderTables();
       }

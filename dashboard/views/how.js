@@ -195,7 +195,7 @@
         stage(3, "decide", "Decide", "Lock at 95%",
           "When one expert passes 95% confidence, OTS locks: it names the recipe and reads off the secret settings. Until then it keeps listening.", decideEx),
         stage(4, "predict", "Predict", "Call the next hop",
-          "With the recipe and its secret, OTS calls the next channel before the radio gets there. If “Unknown” wins, it makes no claim.", predictEx)),
+          "Calling the next channel is the goal. When a recipe is named, its secret makes the next hop almost certain. A universal predictor keeps calling the next hop even for a brand-new recipe no expert knows — only a truly unbreakable radio defeats it.", predictEx)),
       tr ? el("p", { class: "card-foot", style: "margin:0" },
         `Real run: ${OTS.emitName(tr.emitter)} radio, ${OTS.sensorLabel(tr).toLowerCase()}, recorded seed ${tr.seed}.`) : null,
     ];

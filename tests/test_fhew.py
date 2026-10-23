@@ -670,3 +670,44 @@ def test_csprng_is_unpredictable_by_the_universal_predictor():
         true = g.sequence(150)
         tops.append(predict_over_episode(pred, true, sensor.observe(true, ch, rng)).top1)
     assert float(np.mean(tops)) < 0.15   # no better than ~chance (1/16 = 0.0625)
+
+
+# ========================================= 8. dashboard prediction integration
+def test_dashboard_new_algorithm_emitters_present():
+    from dashboard.traces import EMITTERS, NEW_ALGORITHM_GENERATORS  # noqa: F401
+    from fhew.config import NEW_ALGORITHM_GENERATORS as NEW
+    ids = {e["id"] for e in EMITTERS if e.get("new_algo")}
+    assert ids == set(NEW)                        # all held-out algos are selectable
+    assert "csprng" in {e["id"] for e in EMITTERS}
+
+
+def test_dashboard_engagement_records_predictor_forecast():
+    from dashboard.traces import Engine, record_engagement
+    eng = Engine.build(0.95, 0.01)
+    tr = record_engagement(eng, "lagged_fib", 1234, preset="clear")
+    assert tr["new_algo"] is True
+    assert len(tr["fc_pred"]) == tr["window"]      # a predictor forecast per slot
+    assert all(len(f) == tr["M"] for f in tr["fc_pred"])
+    assert 0.0 <= tr["pred_top1"] <= 1.0 and 0.0 <= tr["pred_top1_steady"] <= 1.0
+
+
+def test_dashboard_predictor_beats_chance_on_new_algorithm():
+    # the universal predictor must predict a new algorithm (quadratic full cycle)
+    # far above chance under a clean sensor, with no expert built for it.
+    from dashboard.traces import Engine, draw_episode, predict_top1, M
+    eng = Engine.build(0.95, 0.0)
+    steady = []
+    for s in (3, 11, 29):
+        ep, _ = draw_episode(eng, "quadratic_cg", s)
+        steady.append(predict_top1(eng.predictor, ep)[1])
+    assert float(np.mean(steady)) > 5.0 / M       # well above the 1/M chance line
+
+
+def test_dashboard_scoreboard_exposes_prediction():
+    from dashboard.traces import scoreboard, PRESETS, EMITTERS
+    board = scoreboard(3, presets=[PRESETS[0]],
+                       emitters=[e for e in EMITTERS if e["id"] in ("lfsr", "lagged_fib")])
+    for r in board["rows"]:
+        assert "pred_top1" in r and "pred_top1_steady" in r and "new_algo" in r
+    lfsr = next(r for r in board["rows"] if r["emitter"] == "lfsr")
+    assert lfsr["pred_top1"] >= 0.8               # predictor matches the bank on a known pattern

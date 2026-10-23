@@ -55,7 +55,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
     proof = {"bm_vs_filtered": P.bm_vs_filtered(n_proof_seeds),
              "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
     return {
-        "version": 2,
+        "version": 3,
         "generated": dt.date.today().isoformat(),
         "M": T.M, "window": T.WINDOW, "delta": T.DELTA,
         "hypotheses": T.HYPOTHESES, "emitters": T.EMITTERS,

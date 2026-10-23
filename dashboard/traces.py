@@ -22,7 +22,7 @@ import numpy as np
 from experiments import common as C
 from fhew.baselines import PairwiseSPRT
 from fhew.channels import ChannelSet
-from fhew.config import GENERATOR_TARGET_FAMILY
+from fhew.config import GENERATOR_TARGET_FAMILY, NEW_ALGORITHM_GENERATORS, prediction_expert_specs
 from fhew.experts import (
     DeterministicHypothesis,
     HypothesisBank,
@@ -32,6 +32,7 @@ from fhew.experts import (
 )
 from fhew.generators import make_generator
 from fhew.likelihood import SensorAwareEmission
+from fhew.predict import ChannelPredictor
 from fhew.sensor import SensorModel
 from fhew.sim import Episode, decide_outcome, run_sprt
 
@@ -84,6 +85,15 @@ EMITTERS = [
      "blurb": "The 2-D Hénon attractor, quantised to channels."},
     {"id": "markov", "name": "Markov hopper", "kind": "Statistical",
      "blurb": "Each hop drawn from a hidden transition matrix."},
+    {"id": "lagged_fib", "name": "Lagged generator", "kind": "New algorithm", "new_algo": True,
+     "blurb": "A new scheme with no expert in the bank: each hop is the sum of the "
+              "last two. Not a first-order pattern, so only the universal predictor catches it."},
+    {"id": "quadratic_cg", "name": "Quadratic PRNG", "kind": "New algorithm", "new_algo": True,
+     "blurb": "A new nonlinear congruential generator the bank has no expert for; "
+              "still predictable once its cycle is learnt."},
+    {"id": "sine_map", "name": "Sine map", "kind": "New algorithm", "new_algo": True,
+     "blurb": "A chaotic map outside the bank's chaos family; predictable above chance "
+              "only through the universal predictor."},
     {"id": "csprng", "name": "Keyed CSPRNG", "kind": "Cryptographic control",
      "blurb": "SHA-256 counter mode with a 128-bit key: nothing to exploit."},
 ]
@@ -94,25 +104,32 @@ PRESETS = [
     {"id": "harsh", "name": "Contested", "p_d": 0.60, "p_fa": 0.05},
 ]
 
-#: the guided demo: identification, a hostile sensor, chaos, and the H_0 test
+#: the guided demo: identification, a hostile sensor, chaos, a new algorithm, the H_0 test
 TOUR = [
     {"emitter": "lfsr", "preset": "typical"},
     {"emitter": "weak_seed", "preset": "harsh"},
     {"emitter": "henon", "preset": "typical"},
-    {"emitter": "filtered_lfsr", "preset": "harsh"},
+    {"emitter": "lagged_fib", "preset": "clear"},
     {"emitter": "csprng", "preset": "typical"},
 ]
 
 
 @dataclass
 class Engine:
-    """A bank and a baseline SPRT for one sensor condition, reusable across episodes."""
+    """Bank, baseline SPRT and next-channel predictor for one sensor condition.
+
+    The bank *identifies* the generator; the :class:`~fhew.predict.ChannelPredictor`
+    (the thesis Fixed-Share mixture, carrying a zero-shot universal predictor)
+    *predicts the next channel* — and keeps predicting for a new algorithm the
+    bank has no expert for. Both read the same observation stream.
+    """
 
     channels: ChannelSet
     sensor: SensorModel
     window: int
     bank: HypothesisBank
     sprt: PairwiseSPRT
+    predictor: ChannelPredictor
 
     @classmethod
     def build(cls, p_d: float, p_fa: float, *, window: int = WINDOW) -> "Engine":
@@ -122,7 +139,12 @@ class Engine:
         bank = C.make_bank(ch, window, sensor, specs, stopping={"kind": "msprt", "delta": DELTA})
         sprt = PairwiseSPRT([build_hypothesis(s, ch, window) for s in specs],
                             SensorAwareEmission(sensor), M)
-        return cls(ch, sensor, window, bank, sprt)
+        # The predictor's identification experts use the same recce ranges as the
+        # bank (so it predicts known generators exactly as well), plus the
+        # zero-shot universal predictor for everything outside the bank.
+        predictor = ChannelPredictor(ch, sensor, specs=prediction_expert_specs(M),
+                                     horizon=window + 4)
+        return cls(ch, sensor, window, bank, sprt, predictor)
 
     def search_space(self) -> int:
         return sum(_n_candidates(h) for h in self.bank.hypotheses)
@@ -192,6 +214,12 @@ def true_secret(gen) -> str:
         return f"Hénon map · a={gen.a:g}, b={gen.b:g}"
     if name == "markov":
         return "hidden 16×16 transition matrix"
+    if name == "lagged_fib":
+        return f"sum of last {gen.lag} · start {'·'.join(str(s) for s in gen._seed)}"
+    if name == "quadratic_cg":
+        return f"a={gen.a}, b={gen.b}, c={gen.c} · start {gen._seed}"
+    if name == "sine_map":
+        return f"Sine map · r={gen.r:g}"
     if name == "csprng":
         return f"{8 * len(gen.key)}-bit key"
     return "—"
@@ -233,25 +261,44 @@ def recovered_secret(h, truth: np.ndarray, true_text: str) -> tuple[str | None, 
 
 
 # ---------------------------------------------------------------- engagement
+def _top1(forecasts: list[np.ndarray], truth: np.ndarray, *, start: int = 0) -> float | None:
+    """Share of slots where the argmax forecast equals the true next channel."""
+    n = hit = 0
+    for j, f in enumerate(forecasts):
+        if j < start or j + 1 >= len(truth):
+            continue
+        n += 1
+        hit += int(int(np.argmax(f)) == int(truth[j + 1]))
+    return round(hit / n, 4) if n else None
+
+
 def record_engagement(engine: Engine, gen_name: str, seed: int, *, preset: str = "custom") -> dict:
     """Run one engagement slot by slot and return the dashboard trace."""
     ep, gen = draw_episode(engine, gen_name, seed)
     bank = engine.bank
     bank.reset()
+    predictor = engine.predictor
+    predictor.reset()
     labels = bank.labels
-    dets, post, fc, kappa, alive = [], [], [], [], []
+    dets, post, fc, fc_pred, kappa, kappa_pred, alive = [], [], [], [], [], [], []
+    pred_forecasts = []
     truth = np.asarray(ep.true_channels)
     secret_true = true_secret(gen)
     recovered = (None, None)
     for o in ep.observations:
         bank.update(o)
+        predictor.observe(o)
         p = bank.posterior()
         nxt = bank.predict()
+        pnxt = predictor.predict_next()
+        pred_forecasts.append(pnxt)
         dets.append(sorted(int(c) for c in o.detected_channels))
         post.append([round(float(x), 5) for x in p])
         fc.append([int(round(1000 * float(x))) for x in nxt])
+        fc_pred.append([int(round(1000 * float(x))) for x in pnxt])
         nz = nxt[nxt > 0]
         kappa.append(round(float(1.0 - (-(nz * np.log(nz)).sum()) / np.log(M)), 4))
+        kappa_pred.append(round(float(predictor.predictability()), 4))
         alive.append(_alive(bank, p))
         if bank.declared and bank.tau_stop == bank.t:
             recovered = recovered_secret(bank.hypotheses[bank.declared_index], truth, secret_true)
@@ -267,6 +314,7 @@ def record_engagement(engine: Engine, gen_name: str, seed: int, *, preset: str =
             recovered = recovered_secret(bank.hypotheses[top], truth, secret_true)
 
     base = run_sprt(engine.sprt, ep)
+    half = engine.window // 2
     return {
         "emitter": gen_name, "preset": preset, "seed": int(seed),
         "p_d": engine.sensor.p_d, "p_fa": engine.sensor.p_fa,
@@ -274,6 +322,12 @@ def record_engagement(engine: Engine, gen_name: str, seed: int, *, preset: str =
         "labels": list(labels), "target": ep.target_label,
         "truth": [int(c) for c in truth],
         "dets": dets, "post": post, "fc": fc, "kappa": kappa, "alive": alive,
+        # the Fixed-Share predictor's next-channel forecast + its sharpness, slot by slot
+        "fc_pred": fc_pred, "kappa_pred": kappa_pred,
+        "pred_top1": _top1(pred_forecasts, truth),
+        "pred_top1_steady": _top1(pred_forecasts, truth, start=half),
+        "bank_top1": _top1([np.asarray(f, dtype=float) for f in fc], truth),
+        "new_algo": gen_name in NEW_ALGORITHM_GENERATORS,
         "search_space": engine.search_space(),
         "declared": bool(bank.declared), "tau": tau, "decision": decision,
         "correct": decision == ep.target_label,
@@ -334,6 +388,28 @@ def markov_top1(ep: Episode, M: int) -> float:
     return float(np.mean(hits))
 
 
+def predict_top1(predictor: ChannelPredictor, ep: Episode) -> tuple[float, float]:
+    """Next-channel top-1 of the Fixed-Share predictor: (whole run, steady state).
+
+    Steady state is the second half of the window, after the universal predictor
+    has had time to learn an unseen rule.
+    """
+    predictor.reset()
+    true = ep.true_channels
+    half = ep.window // 2
+    whole, steady = [], []
+    for t, o in enumerate(ep.observations):
+        predictor.observe(o)
+        if t + 1 >= ep.window:
+            continue
+        hit = int(predictor.predict_top1() == int(true[t + 1]))
+        whole.append(hit)
+        if t >= half:
+            steady.append(hit)
+    return (float(np.mean(whole)) if whole else 0.0,
+            float(np.mean(steady)) if steady else 0.0)
+
+
 def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int = WINDOW,
                progress=None) -> dict:
     """Monte-Carlo scores per emitter and preset: bank vs pairwise SPRT, plus next-hop."""
@@ -341,7 +417,7 @@ def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int 
     for pr in presets:
         engine = Engine.build(pr["p_d"], pr["p_fa"], window=window)
         for em in emitters:
-            ots, base, top1, top1_lock, mk = [], [], [], [], []
+            ots, base, top1, top1_lock, mk, pred, pred_steady = [], [], [], [], [], [], []
             for s in C.seeds(n_seeds):
                 ep, _ = draw_episode(engine, em["id"], s)
                 res, hits, after = score_episode(engine.bank, ep)
@@ -350,10 +426,13 @@ def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int 
                 if after:
                     top1_lock.append(float(np.mean(after)))
                 mk.append(markov_top1(ep, M))
+                pw, ps = predict_top1(engine.predictor, ep)
+                pred.append(pw); pred_steady.append(ps)
                 base.append(run_sprt(engine.sprt, ep))
             hops = [int(r.tau_stop) for r in ots if r.correct and r.declared]
             rows.append({
                 "emitter": em["id"], "preset": pr["id"], "n": len(ots),
+                "new_algo": bool(em.get("new_algo")),
                 "ots_acc": _rate([r.correct for r in ots]),
                 "ots_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
                                           and not r.correct for r in ots]),
@@ -363,6 +442,9 @@ def scoreboard(n_seeds: int, *, presets=PRESETS, emitters=EMITTERS, window: int 
                 "ots_top1": _rate(top1),
                 "ots_top1_locked": _rate(top1_lock),
                 "markov_top1": _rate(mk),
+                # the Fixed-Share predictor: the system's actual next-channel output
+                "pred_top1": _rate(pred),
+                "pred_top1_steady": _rate(pred_steady),
                 "base_acc": _rate([r.correct for r in base]),
                 "base_false_break": _rate([r.decision_label in ALGEBRAIC_FAMILIES
                                            and not r.correct for r in base]),

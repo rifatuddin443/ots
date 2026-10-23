@@ -130,7 +130,10 @@ window.OTS = (function () {
   /* Trace layout (all arrays indexed by 0-based slot j = hop number - 1):
    *   tr.truth[j]  true channel          tr.dets[j]  detected channels (what OTS sees)
    *   tr.post[j][k] posterior after hop j+1, k aligned with tr.labels ('H0' first)
-   *   tr.fc[j]     next-hop forecast for slot j+1, in permille per channel
+   *   tr.fc[j]     bank next-hop forecast for slot j+1, in permille per channel
+   *   tr.fc_pred[j] Fixed-Share predictor's forecast for slot j+1 (permille per channel)
+   *   tr.pred_top1 / tr.pred_top1_steady  predictor next-hop top-1 (whole run / 2nd half)
+   *   tr.new_algo  true when the bank has no expert for this emitter
    *   tr.alive[j]  candidate generators still plausible   tr.kappa[j] predictability
    *   tr.declared / tr.tau (hop of the lock, 1-based) / tr.decision / tr.correct
    *   tr.secret_true / tr.secret_recovered / tr.secret_match / tr.baseline {decision, declared, tau, correct}
@@ -152,6 +155,18 @@ window.OTS = (function () {
   T.forecastFor = (tr, j) => (j <= 0 || j - 1 >= tr.fc.length ? null : tr.fc[j - 1]);
   /** Top forecast channel for slot j: {ch, p (0..1)} or null. */
   T.forecastTop = (tr, j) => { const f = T.forecastFor(tr, j); if (!f) return null; const ch = T.argmax(f); return { ch, p: f[ch] / 1000 }; };
+  /** The Fixed-Share predictor's forecast (permille) before slot j, or null. */
+  T.predForecastFor = (tr, j) => (j <= 0 || !tr.fc_pred || j - 1 >= tr.fc_pred.length ? null : tr.fc_pred[j - 1]);
+  /** The predictor's top forecast channel for slot j: {ch, p} or null. */
+  T.predForecastTop = (tr, j) => { const f = T.predForecastFor(tr, j); if (!f) return null; const ch = T.argmax(f); return { ch, p: f[ch] / 1000 }; };
+  /** The predictor's next-hop hit rate over the whole run so far (hops 2..t). */
+  T.predHitStats = (tr, t) => {
+    let n = 0, hit = 0;
+    for (let j = 1; j < t; j++) { const f = T.predForecastTop(tr, j); if (!f) continue; n++; if (f.ch === tr.truth[j]) hit++; }
+    return { n, hit, rate: n ? hit / n : null };
+  };
+  /** Is this emitter a "new algorithm" the bank has no expert for? */
+  T.isNewAlgo = (tr) => !!(tr && tr.new_algo);
   /** Next-hop hit rate up to hop t: since the lock if locked, else overall. */
   T.hitStats = (tr, t) => {
     const sinceLock = T.lockedAt(tr, t), from = sinceLock ? tr.tau : 1;
@@ -187,6 +202,8 @@ window.OTS = (function () {
   function agg(rows) {
     const n = rows.reduce((s, r) => s + r.n, 0) || 1;
     const w = (f) => rows.reduce((s, r) => s + (r[f] == null ? 0 : r[f] * r.n), 0) / n;
+    const has = (f) => rows.some((r) => r[f] != null);
+    const wn = (f) => (has(f) ? w(f) : null);   // null (not 0) when a field is absent in older data
     const lockedRows = rows.filter((r) => r.ots_top1_locked != null);
     const nl = lockedRows.reduce((s, r) => s + r.n, 0);
     const hops = rows.flatMap((r) => r.ots_hops);
@@ -196,6 +213,8 @@ window.OTS = (function () {
       ots_fb: w("ots_false_break"), base_fb: w("base_false_break"),
       ots_unknown: w("ots_unknown"), ots_locked: w("ots_locked"),
       top1: w("ots_top1"), markov_top1: w("markov_top1"),
+      // the Fixed-Share predictor (the system's actual next-channel output)
+      pred_top1: wn("pred_top1"), pred_top1_steady: wn("pred_top1_steady"),
       top1_locked: nl ? lockedRows.reduce((s, r) => s + r.ots_top1_locked * r.n, 0) / nl : null,
       hops, hops_med: median(hops),
     };
@@ -211,6 +230,10 @@ window.OTS = (function () {
   S.byPreset = () => OTS.presets.map((p) => ({ ...p, ...agg(S.rows(p.id)) }));
   /** One aggregate over everything matching the preset filter. */
   S.overall = (preset = "all") => agg(S.rows(preset));
+  /** Aggregate over rows matching the preset filter AND a row predicate. */
+  S.overallWhere = (preset = "all", pred = () => true) => agg(S.rows(preset).filter(pred));
+  /** Is an emitter id a "new algorithm" the bank has no expert for? */
+  S.isNewAlgo = (id) => !!(EMIT.get(id) && EMIT.get(id).new_algo);
   /** Chance of guessing a hop at random (1 / channels). */
   S.chance = () => (DATA ? DATA.scoreboard.chance_top1 : 1 / 16);
 
@@ -646,7 +669,8 @@ window.OTS = (function () {
           if (SC.preset === "custom") { SC.emitter = e.id; renderDrawer(); OTS.runLive(); }
           else OTS.select(e.id, SC.preset, OTS.bestRun(e.id, SC.preset));
         },
-      }, OTS.el("b", {}, e.name), OTS.el("small", {}, e.id === "csprng" ? "control: unbreakable" : e.kind))))));
+      }, OTS.el("b", {}, e.name), OTS.el("small", {}, e.id === "csprng" ? "control: unbreakable"
+        : e.new_algo ? "new · no expert in bank" : e.kind))))));
     const presetBtns = OTS.presets.map((p) => OTS.el("button", {
       class: "btn" + (SC.preset === p.id ? " sel" : ""),
       onclick: () => { tour.stop(); OTS.select(SC.emitter, p.id, OTS.bestRun(SC.emitter, p.id)); },

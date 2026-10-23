@@ -575,6 +575,21 @@
     // the known weak spot, explained in plain words rather than hidden
     if (tr.emitter === "lcg_full" && (ph === "end" || locked) && !tr.correct) body.push(el("div", { class: "live-why" },
       "Why: this pattern is solved from an unbroken run of clean hops (no misses, no ghosts). A noisy sensor rarely delivers one, so this is a known weak spot."));
+    // the next-channel predictor keeps calling the next hop even when the bank
+    // cannot name the pattern — the whole point for a new algorithm.
+    if (t > 0 && tr.fc_pred) {
+      const pstat = T.predHitStats(tr, t), chance = 1 / tr.M, newAlgo = T.isNewAlgo(tr);
+      if (pstat.n >= 3) {
+        const good = pstat.rate >= 1.6 * chance;
+        body.push(el("div", { class: "live-match " + (good ? "live-ok" : "live-soft") },
+          `Next-hop predictor: ${pstat.hit} of ${pstat.n} calls right (${Math.round(pstat.rate * 100)}%` +
+          `, random ${Math.round(chance * 100)}%)` +
+          (newAlgo ? " — no expert for this scheme, yet the next hop is still predicted." : "")));
+      } else if (newAlgo) {
+        body.push(el("div", { class: "live-match live-soft" },
+          "New scheme: no expert in the bank — watch the predictor still call the next hop."));
+      }
+    }
     if (ph === "end") body.push(baselineLine(tr));
     card.classList.toggle("accent", locked);
     OTS.clear(card).append(
@@ -670,7 +685,7 @@
   // ================================================================= view
   OTS.views.register({
     id: "live", nav: "Live demo", title: "Watch it work", hint: "One engagement, hop by hop",
-    subtitle: "Name it, then predict it", icon: "M5 3l14 9-14 9V3z", usesPlayer: true,
+    subtitle: "Name it when it can — predict the next hop always", icon: "M5 3l14 9-14 9V3z", usesPlayer: true,
     mount(root) {
       injectCss();
       const narr = el("div", { class: "callout live-narr" });
