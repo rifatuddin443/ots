@@ -38,8 +38,27 @@ __all__ = [
     "ChannelPredictor",
     "PredictionScore",
     "predict_over_episode",
+    # Revision 3: confidence-adaptive mixture, regime monitor, allocation.
+    "FixedShareMixture",
+    "RegimeController",
+    "EffectModel",
+    "AllocationController",
     "__version__",
 ]
+
+
+def __getattr__(name):
+    # Lazy re-exports so importing fhew stays light (scipy etc. load on demand).
+    if name in ("FixedShareMixture", "HypothesisExpert", "build_default_mixture"):
+        import fhew.mixture as m
+        return getattr(m, name)
+    if name in ("RegimeController", "make_detector", "recovery_time"):
+        import fhew.regime as r
+        return getattr(r, name)
+    if name in ("EffectModel", "AllocationController", "CDTController"):
+        import fhew.allocator as a
+        return getattr(a, name)
+    raise AttributeError(f"module 'fhew' has no attribute {name!r}")
 
 __version__ = "0.1.0"
 

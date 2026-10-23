@@ -28,6 +28,12 @@ METHOD_COLORS = {
     "bank_naive": PALETTE["vermillion"], "pairwise_sprt": PALETTE["orange"],
     "fixed_length": PALETTE["green"], "learned": PALETTE["purple"],
     "lstm": PALETTE["purple"], "eprocess": PALETTE["sky"], "msprt": PALETTE["blue"],
+    # Revision-3 mixture / allocation methods (exp14-16).
+    "mix_flush": PALETTE["green"], "mix_weights_only": PALETTE["orange"],
+    "bank_alone": PALETTE["vermillion"], "mixture": PALETTE["green"],
+    "greedy_knapsack": PALETTE["blue"], "water_filling": PALETTE["green"],
+    "weighted_water_filling": PALETTE["orange"], "equal": PALETTE["grey"],
+    "reactive": PALETTE["green"],
 }
 GENERATOR_COLORS = {
     "lfsr": PALETTE["blue"], "filtered_lfsr": PALETTE["sky"], "lcg": PALETTE["orange"],

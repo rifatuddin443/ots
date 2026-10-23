@@ -92,7 +92,7 @@ falls back to chance. It never sees the true channel — only `Observation`s.
 
 ```bash
 python -m fhew.datagen --n-per-class 250         # train the learned baseline + grounding
-python -m scripts.run_all                        # all 11 experiments -> results/ + results/figures/
+python -m scripts.run_all                        # all 17 experiments -> results/ + results/figures/
 python -m scripts.run_all --quick                # fast smoke run (fewer seeds)
 python -m scripts.run_all --only exp1 exp3       # a subset
 python -m experiments.exp1_hops_vs_pd --plot-only # re-render a figure from saved JSON (no re-sim)
@@ -158,6 +158,9 @@ the exp6/exp7 protocols with the same seeds.
 | `exp12_full_bank_confusion` | thesis §5 | Full expert-bank coverage confusion matrix (every expert fires on its target) |
 | `exp13_coverage` | thesis §5 | Large-scale per-type identification over the whole library (7,500 episodes) |
 | `exp14_next_channel_prediction` | thesis §4.2 / §12 (headline) | **Next-channel top-1 accuracy**, incl. new algorithms the bank has no expert for; proposed (universal) vs bank-only vs Markov vs uniform |
+| `exp15_regime_switch` | thesis §4.2 / §6.4 | Recovery time after a mid-engagement generator switch: Fixed-Share + context flush vs weights-only vs bank-alone |
+| `exp16_allocation` | thesis §6.3 / §7 | Multi-tone power allocation: spot↔barrage knapsack vs water-filling, and reactive/follower jamming vs dwell |
+| `exp17_feasibility` | thesis §10 | Feasibility map with the reactive-jamming region (dwell vs reaction latency, and window vs hop rate) |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -218,6 +221,55 @@ family) or `full_bank_specs(M)` (all experts, for the coverage matrix).
 
 ---
 
+## Confidence-adaptive mixture, regime monitor and allocation (thesis journal)
+
+On top of the identification bank sit the pieces that let the system **track a
+changing adversary** and **act** on a prediction. They are additive — the gym
+core and the bank are untouched, and the bank enters the mixture through its
+existing `Expert` interface.
+
+| Component | Module | What it adds |
+| --- | --- | --- |
+| Fixed-Share mixture | `fhew/mixture.py` | Weights experts (bank + universal + Markov + barrage) by *recent* log-loss with a share floor `α>0`, so a dead expert recovers after a switch |
+| Regime monitor | `fhew/regime.py` | CUSUM / BOCPD / conformal-e change detector on the loss stream; on an alarm **resets the weights AND flushes the universal predictor's context** (exponential forgetting) — closing the gap where a weights-only reset left stale context mispredicting |
+| Dwell feature | `fhew/dwell.py` | Online dwell estimate; a predictability contribution and the reactive-jamming trigger |
+| Multi-tone allocator | `fhew/allocator.py` | Threshold-aware greedy knapsack over the predictive (spot↔barrage from one knob `λ`, CDT-calibrated), reactive/follower mode, water-filling baselines |
+| Feasibility map | `fhew/feasibility.py` | Adds the reactive-follower region (dwell > reaction latency, regardless of κ) |
+| Scenarios | `fhew/scenarios.py` | Regime-switch and long-dwell episode builders + the entropy-max adversary |
+
+```python
+from fhew import ChannelSet, SensorModel
+from fhew.mixture import build_default_mixture
+from fhew.regime import RegimeController, make_detector, recovery_time
+from fhew.scenarios import make_switch_episode
+import numpy as np
+
+ch, sensor = ChannelSet.of_size(16), SensorModel(0.97, 0.01)
+ep = make_switch_episode([("markov", {"alpha": 0.03}), ("markov", {"alpha": 0.03})],
+                         ch, sensor, 240, np.random.default_rng(0), switch_at=120)
+mix = build_default_mixture(ch, 240, sensor)
+ctrl = RegimeController(mix, make_detector("cusum"), forget_context=True)  # flush on alarm
+for o in ep.observations:
+    ctrl.update(o)                      # drives mixture + monitor; flushes context on a switch
+```
+
+### Findings (exp15 / exp16 / exp17)
+
+- **Regime switch (exp15).** On a near-deterministic Markov hopper that switches
+  mid-engagement, resetting the weights **and** flushing the context recovers the
+  top-1 prediction **1.2–2.3× faster** than resetting the weights alone; the
+  cumulative bank is slowest. The CUSUM monitor fires on ≈ 78 % of switches with
+  ≈ 0.12 false alarms per episode.
+- **Allocation (exp16).** The knapsack tracks the best allocation across the
+  predictability range and degrades to a barrage floor (reward ≈ 0.11) where
+  water-filling collapses to 0. Against an *uncrackable* CSPRNG, reactive/follower
+  jamming lifts reward from 0.11 (dwell 1) to 0.82 (dwell 8) — unpredictable is
+  not un-jammable.
+- **Feasibility (exp17).** Against a `κ=0` hopper, ≈ 71 % of the dwell/latency
+  plane is still jammable by detect-and-follow.
+
+---
+
 ## Package layout
 
 Each concern is a single flat module in `fhew/` (the former subpackages were
@@ -242,11 +294,18 @@ fhew/
   metrics.py         identification / calibration / next-hop + CIs + significance
   config.py          dataclasses, YAML, bank builders (conference / id / full)
   datagen.py         training data + parameter grounding provenance
+  mixture.py         Fixed-Share expert mixture (+ Expert adapter) — thesis §4.2
+  regime.py          change detectors (CUSUM/BOCPD/conformal-e) + controller — §6.4
+  dwell.py           dwell estimation: predictability feature + reactive trigger
+  allocator.py       threshold-aware knapsack + reactive/follower + CDT knob — §7
+  feasibility.py     strategy feasibility map incl. the reactive region — §10
+  scenarios.py       regime-switch / long-dwell episode builders
 configs/             conference.yaml, quick.yaml
-experiments/         exp1..exp13 + shared style/harness
+experiments/         exp1..exp17 + shared style/harness
 scripts/run_all.py   run everything
 dashboard/           demo dashboard: recorder, proofs, build, live server, pages
-tests/test_fhew.py   67 tests incl. the information-parity audit
+tests/test_fhew.py                67 tests incl. the information-parity audit
+tests/test_mixture_allocation.py  29 tests for the mixture / regime / allocator
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -285,5 +344,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 67 tests, ~20s
+python -m pytest        # 96 tests, ~25s
 ```

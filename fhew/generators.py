@@ -446,6 +446,51 @@ class CSPRNGGenerator(Generator):
     def describe(self) -> dict:
         return {"name": self.name, "n_channels": self.n_channels, "keyed": True}
 
+
+@register("entropy_max")
+class EntropyMaxGenerator(Generator):
+    """Entropy-maximising hopper (red-team adversary, thesis Section 11).
+
+    Draws each hop uniformly at random over the effective channel set, so its
+    next-hop distribution is as flat as possible. This is the adversary that
+    *should* defeat prediction: it pins the predictability score kappa near
+    zero and forces the barrage floor. Combined with a short dwell (see
+    ``fhew.scenarios.with_dwell``) it is the corner that defeats the reactive /
+    follower jammer too -- the thesis' true predictability boundary.
+
+    Statistically indistinguishable from a keyed CSPRNG for prediction, but
+    cheap and seed-reproducible, and it exposes an explicit ``blacklist`` so the
+    spread can be confined to a channel plan.
+    """
+
+    def __init__(self, n_channels: int, seed: int, blacklist: tuple[int, ...] = ()):
+        super().__init__(n_channels)
+        self._seed = int(seed)
+        self.blacklist = tuple(int(b) for b in blacklist)
+        self._allowed = np.array([c for c in range(n_channels) if c not in set(self.blacklist)],
+                                 dtype=np.int64)
+        if self._allowed.size == 0:
+            raise ValueError("entropy_max blacklist removed every channel")
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               seed: int | None = None, blacklist: tuple[int, ...] = ()):
+        rng = rng or np.random.default_rng()
+        if seed is None:
+            seed = int(rng.integers(0, 2 ** 31 - 1))
+        return cls(n_channels=n_channels, seed=seed, blacklist=blacklist)
+
+    def reset(self) -> None:
+        self._rng = np.random.default_rng(self._seed)
+
+    def next_channel(self) -> int:
+        return int(self._rng.choice(self._allowed))
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels,
+                "effective_channels": int(self._allowed.size)}
+
 # ---- chaotic map generators (for the parametric-chaos-ID and phase-space experts) ----
 
 

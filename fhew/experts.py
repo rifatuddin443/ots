@@ -38,6 +38,18 @@ class Expert(abc.ABC):
     def reset(self) -> None:
         """Return to the pre-engagement state."""
 
+    def forget(self, retain: float = 0.0) -> None:
+        """Exponentially forget learned context after a regime switch.
+
+        ``retain`` in ``[0, 1]`` is the fraction of accumulated evidence kept
+        (0 = flush to the pre-engagement prior, 1 = no forgetting). Stateless
+        experts need do nothing; online predictors shrink their count tables and
+        windowed context toward the prior (paper Section 6.4). This is the hook
+        the regime monitor calls so a switch flushes the *context model*, not
+        only the mixture weights.
+        """
+        return None
+
 # ---- merged from fhew/experts/hypothesis.py ----
 import abc
 import math
@@ -79,6 +91,16 @@ class Hypothesis(abc.ABC):
     @abc.abstractmethod
     def reset(self) -> None:
         ...
+
+    def forget(self, retain: float = 0.0) -> None:
+        """Exponentially forget learned context (paper Section 6.4).
+
+        Default no-op for stateless / enumerated hypotheses (their candidate
+        posterior is already recovered by Fixed-Share on the mixture side).
+        Online predictors override this to shrink their context toward the
+        pre-engagement prior; see :meth:`Expert.forget`.
+        """
+        return None
 
     @property
     def n_particles(self) -> int:  # pragma: no cover - overridden
@@ -142,6 +164,14 @@ class MarkovHypothesis(Hypothesis):
 
     def reset(self) -> None:
         self.counts = np.full((self.M, self.M), self.alpha, dtype=np.float64)
+        self.prior = self.channels.uniform()
+        self._last_clean = None
+        self._last_predict = self.channels.uniform()
+
+    def forget(self, retain: float = 0.0) -> None:
+        retain = float(np.clip(retain, 0.0, 1.0))
+        # shrink the fitted transition evidence back toward the Laplace prior
+        self.counts = self.alpha + retain * (self.counts - self.alpha)
         self.prior = self.channels.uniform()
         self._last_clean = None
         self._last_predict = self.channels.uniform()
@@ -266,6 +296,19 @@ class _PredictorHypothesis(Hypothesis):
     def predict_next(self) -> np.ndarray:
         return self._last_predict
 
+    def forget(self, retain: float = 0.0) -> None:
+        """Flush/window the learned context after a regime switch.
+
+        Delegates the model-specific shrink to :meth:`_forget_model`, then
+        rolls the predictive back to the prior. ``retain=0`` is a hard flush
+        (the context model's stale patterns are the gap flagged in Section 6.4);
+        ``retain`` in ``(0,1)`` is exponential forgetting.
+        """
+        retain = float(np.clip(retain, 0.0, 1.0))
+        self._forget_model(retain)
+        self.prior = self.channels.uniform()
+        self._last_predict = self.channels.uniform()
+
     @property
     def n_particles(self) -> int:
         return self.M
@@ -273,6 +316,12 @@ class _PredictorHypothesis(Hypothesis):
     # ---- subclass hooks ----
     def _reset_model(self) -> None:  # pragma: no cover - overridden
         ...
+
+    def _forget_model(self, retain: float) -> None:
+        """Shrink learned state toward the prior. Default: a hard reset when
+        flushing, otherwise leave the model (subclasses do proper decay)."""
+        if retain <= 0.0:
+            self._reset_model()
 
     def _ingest(self, channel: int) -> None:  # pragma: no cover - overridden
         ...
@@ -371,6 +420,22 @@ class ContextMixingHypothesis(_PredictorHypothesis):
         s = mix.sum()
         return mix / s if s > 0 else self.channels.uniform()
 
+    def _forget_model(self, retain: float) -> None:
+        # Exponential forgetting of the context tables + a context-window flush.
+        # This is the specific fix for Section 6.4: the universal predictor's
+        # tables are full of the *old* generator's patterns right after a switch,
+        # so they must be shrunk (not just the mixture weights reset) or the
+        # predictor keeps mispredicting until they flush out on their own.
+        if retain <= 0.0:
+            self._reset_model()
+            return
+        for tab in self.tables:
+            for key in list(tab.keys()):
+                tab[key] *= retain
+        K = self.max_order
+        self.weights = np.full(K + 1, 1.0 / (K + 1))
+        self.run = []                    # window: drop the stale contiguous context
+
     def map_order(self) -> int:
         return int(np.argmax(self.weights))
 
@@ -392,6 +457,15 @@ class PhaseSpacePredictorHypothesis(_PredictorHypothesis):
 
     def _reset_model(self) -> None:
         self.hist: list[int] = []
+
+    def _forget_model(self, retain: float) -> None:
+        # Window the delay-embedding history: keep only the most recent fraction
+        # so neighbours come from the new regime's trajectory, not the old one.
+        if retain <= 0.0:
+            self.hist = []
+        else:
+            keep = int(round(retain * len(self.hist)))
+            self.hist = self.hist[-keep:] if keep > 0 else []
 
     def _ingest(self, channel: int) -> None:
         self.hist.append(channel)
@@ -436,6 +510,13 @@ class BehaviourHypothesis(_PredictorHypothesis):
         self.counts = np.full((self.M, self.M), self.laplace)
         self.last = None
 
+    def _forget_model(self, retain: float) -> None:
+        if retain <= 0.0:
+            self._reset_model()
+        else:
+            self.counts = self.laplace + retain * (self.counts - self.laplace)
+            self.last = None
+
     def _ingest(self, channel: int) -> None:
         if self.last is not None:
             self.counts *= self.decay
@@ -472,6 +553,17 @@ class MixtureHMMHypothesis(Hypothesis):
     def reset(self) -> None:
         self._filters = [ChannelHMMFilter(T) for T in self._T]
         self.log_w = np.full(len(self._T), -np.log(len(self._T)))
+        self._last_predict = self.channels.uniform()
+
+    def forget(self, retain: float = 0.0) -> None:
+        # Flatten the candidate posterior toward uniform and restart the HMM
+        # filters so a post-switch map lands fresh on the new regime.
+        retain = float(np.clip(retain, 0.0, 1.0))
+        for f in self._filters:
+            f.reset()
+        n = len(self._T)
+        self.log_w = retain * self.log_w + (1.0 - retain) * np.full(n, -np.log(n))
+        self.log_w -= logsumexp(self.log_w)
         self._last_predict = self.channels.uniform()
 
     def step(self, log_emission: np.ndarray) -> StepResult:
@@ -956,6 +1048,12 @@ class _OccupancyFloor:
             self.counts[channel] += 1.0
             self._dist = self.counts / self.counts.sum()
 
+    def forget(self, retain: float = 0.0) -> None:
+        retain = float(np.clip(retain, 0.0, 1.0))
+        self.counts = self.alpha + retain * (self.counts - self.alpha)
+        self._dist = self.counts / self.counts.sum()
+        self.last_predict = self._dist.copy()
+
 
 class H0Hypothesis(Hypothesis):
     """None-of-the-above class (pluggable likelihood, paper Section 4.5 / 5).
@@ -1007,6 +1105,13 @@ class H0Hypothesis(Hypothesis):
 
     def reset(self) -> None:
         self._backend().reset()
+        self._last_predict = self._floor.copy()
+
+    def forget(self, retain: float = 0.0) -> None:
+        backend = self._backend()
+        forget = getattr(backend, "forget", None)
+        if forget is not None:
+            forget(retain)
         self._last_predict = self._floor.copy()
 
     @property
@@ -1110,6 +1215,20 @@ class HypothesisBank(Expert):
         self.declared_index: int | None = None
         self.tau_stop: int | None = None
         self._stop_score = float("nan")
+        self._next_hops = np.tile(self.channels.uniform(), (self.n, 1))
+
+    def forget(self, retain: float = 0.0) -> None:
+        """Re-flatten the bank after a regime alarm (paper Section 6.4).
+
+        Shrinks the cumulative evidence toward zero (so the posterior relaxes
+        back to the prior and a previously-losing generator can win again) and
+        forgets each sub-hypothesis's online-fitted context. Stopping state is
+        left untouched; the regime controller decides whether to re-open it.
+        """
+        retain = float(np.clip(retain, 0.0, 1.0))
+        self.cum_loglik *= retain
+        for h in self._hyps:
+            h.forget(retain)
         self._next_hops = np.tile(self.channels.uniform(), (self.n, 1))
 
     def update(self, obs: Observation) -> float:

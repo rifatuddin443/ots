@@ -310,6 +310,65 @@ significance test on the headline comparison. Default settings: `M = 16`,
 fixed seeds; figures regenerate from saved JSON. Parameter ranges are labelled
 *calibrated* or *assumed* in `fhew/datagen.py::GROUNDING`.
 
+### 4.11 Confidence-adaptive mixture, regime monitor and multi-tone allocation (Revision 3)
+
+The conference bank identifies *one* generator and, weighting by cumulative
+evidence, stays on it. Three Revision-3 components sit on top of the bank
+(additively — the gym core and the bank are untouched) so the system keeps
+working when the adversary changes generator mid-engagement and so it can
+*act* on a prediction, not just name a generator.
+
+**Fixed-Share expert mixture (`fhew/mixture.py`).** A mixture over experts —
+the Bayesian bank as one expert, plus a training-free universal (context-mixing)
+predictor, an online Markov expert and the barrage floor — weights each by its
+*recent* one-step log-loss, `w_{t+1}(i) ∝ w_t(i) exp(-η ℓ_t(i))`, then mixes a
+fraction `α` back to uniform (the **share floor**). The floor is what lets a
+"dead" expert climb back after a switch; with `α = 0` the mixture reduces to
+plain Hedge and stays stuck. The mixture consumes the bank through the existing
+`Expert` interface, so nothing in Layer 2 is re-implemented.
+
+**Regime monitor + context flush (`fhew/regime.py`).** A change detector watches
+the mixture's one-step loss stream — a one-sided CUSUM (primary, cheap),
+a conjugate-Gaussian BOCPD (run-length posterior, MAP-collapse alarm), or a
+distribution-free conformal betting e-detector (ARL-controlled). On an alarm the
+controller does **two** things: (1) resets the Fixed-Share weights, and (2)
+**forgets / windows the universal predictor's context** via exponential
+forgetting (`retain=0` is a hard flush). Step (2) is the fix for a gap in the
+merged architecture, which reset the weights but left the context model full of
+the *old* generator's patterns, so it kept mispredicting until they flushed out
+on their own. `forget(retain)` is implemented on every stateful expert (the
+context-mixing tables shrink and the context window drops, the Markov/occupancy
+counts relax to their prior, the phase-space history is windowed, the bank
+re-flattens its cumulative evidence). We report **recovery time** — hops after
+the switch until the mixture's top-1 next-hop prediction reliably returns.
+
+**Dwell feature (`fhew/dwell.py`).** The emitter's dwell (mean run length on one
+channel) is estimated online from clean slots. A long dwell is both a
+predictability contribution (a "stay" predictor is right `1 − 1/D` of the time)
+and the trigger for the reactive mode below — counted only when the dwell
+exceeds the reaction latency, i.e. when it is actually exploitable.
+
+**Threshold-aware multi-tone allocation (`fhew/allocator.py`).** A single
+next-channel prediction is not enough to act on, so the action is a power
+*vector* over channels. Because jamming is a threshold effect (`g`, denial
+threshold `τ`, per-channel cost `c_i = cost_margin·τ/gain_i`), the allocation is
+a **greedy threshold-aware knapsack**: raise a conservatism floor `λ` on the
+predictive, rank channels by value density `p_i/c_i`, and fully fund in order
+until the budget `P_J` runs out. Spot (concentrate) and barrage (spread) emerge
+from the predictive and the single knob `λ`, which is calibrated online by a
+Conformal-Decision-Theory controller `λ_{t+1} = λ_t + η(L_t − α)` on the
+realised effect forgone — the same `g`/`τ` the allocator uses, so the risk
+objective and the allocation agree. A **reactive / follower** mode jams the
+*currently observed* channel directly (no prediction) whenever the estimated
+dwell exceeds the reaction latency, which is the floor against an unpredictable
+but slow hopper. Water-filling, weighted water-filling, equal-power and spot are
+the baselines.
+
+**Feasibility map (`fhew/feasibility.py`).** The analytic map gains a fourth,
+orthogonal region — **reactive-follower**, feasible wherever dwell > reaction
+latency regardless of predictability — alongside exact-recovery, short-horizon
+prediction and barrage.
+
 ---
 
 ## 5. Results
@@ -639,6 +698,68 @@ available model is the first-order Markov expert (or `H_0`), capping it well bel
 the universal predictor. This is the concrete content of "the bank is limited, but
 the system still predicts the next channel."
 
+### 5.15 Regime-switch recovery — `exp15_regime_switch.png`
+
+![exp15_regime_switch.png](figures/exp15_regime_switch.png)
+
+*A near-deterministic Markov hopper (Dirichlet `α`) switches to a fresh matrix
+at the midpoint of a 240-slot window; recovery time is hops after the switch
+until the top-1 next-hop prediction reliably returns (trailing-6 ≥ 60 %), over
+30 seeds × 4 `α`.* Three configurations:
+
+| config | `α=0.02` | `α=0.04` | `α=0.06` | `α=0.08` |
+| --- | --- | --- | --- | --- |
+| Fixed-Share **+ context flush** (Rev 3) | **15** | **22** | **33** | **46** |
+| Fixed-Share, weights-only reset | 35 | 33 | 46 | 56 |
+| Bayesian bank alone (cumulative) | 34 | 34 | 45 | 55 |
+
+The CUSUM monitor fires on ≈ 78 % of switches (mean delay ≈ 16 hops) with
+≈ 0.12 pre-switch false alarms per episode. **The context flush recovers
+1.2–2.3× faster than resetting the mixture weights alone**, and the cumulative
+bank is slowest — a direct measurement of the gap the merged architecture left
+open: resetting the weights does nothing about the universal predictor's stale
+context, which keeps mispredicting until it is forgotten. When the monitor does
+*not* fire, the flush configuration simply equals weights-only, so the context
+flush never hurts.
+
+### 5.16 Multi-tone power allocation — `exp16_allocation.png`
+
+![exp16_allocation.png](figures/exp16_allocation.png)
+
+*Power-on-target reward (realised effect `g` on the channel actually used),
+`P_J = 3τ`, `M = 16`, 30 seeds.* **Panel A** sweeps adversary predictability;
+**Panel B** sweeps dwell on an unpredictable keyed hopper.
+
+| predictability (nominal) | greedy knapsack | water-filling |
+| --- | --- | --- |
+| 0.0 (CSPRNG) | **0.11** | 0.00 |
+| 0.5 (Markov) | **0.21** | 0.03 |
+| 1.0 (LFSR) | 0.94 | 0.96 |
+
+Spot and barrage emerge from the predictive plus the one knob `λ`: the knapsack
+concentrates when the prediction is sharp and spreads when it is flat, and
+**degrades gracefully to a barrage-like floor where plain water-filling collapses
+to zero effect** (it spreads every channel below `τ`). The knapsack and
+water-filling tie at the sharp end (both deny the one confident channel).
+Panel B is the second weapon: against an *uncrackable* CSPRNG the reactive /
+follower mode raises reward from 0.11 at dwell 1 (the barrage floor) to 0.75–0.82
+at dwell 5–8, **whenever the dwell exceeds the reaction latency — independent of
+κ**. "Unpredictable" is not "un-jammable." The entropy-maximising hopper at
+dwell 1 defeats both prediction and reactive jamming: that corner is the true
+predictability boundary.
+
+### 5.17 The feasibility map — `exp17_feasibility.png`
+
+![exp17_feasibility.png](figures/exp17_feasibility.png)
+
+*Analytic strategy map.* **Panel A** (dwell vs reaction latency, on an
+unpredictable `κ=0` hopper) isolates the **reactive-follower** region — ≈ 71 %
+of the plane is still jammable by detect-and-follow even though prediction is
+hopeless, the rest falls to barrage. **Panel B** (window vs hop rate, on a
+breakable generator) is the classic partition into exact-recovery, short-horizon
+prediction and barrage. The map's thresholds match the mechanisms the simulated
+experiments measure.
+
 ---
 
 ## 6. Discussion of observed behaviour
@@ -676,6 +797,20 @@ confident claim of an algebraic break that is not real — is ≈ 0 across every
 experiment and all 7,500 coverage episodes. A no-`H_0` SPRT, by contrast,
 hard-false-IDs 100 % of the time on any out-of-bank source. The dangerous error
 is the one the design eliminates.
+
+**Non-stationarity and action are handled by the layer on top of the bank.**
+The bank is deliberately a cumulative-evidence identifier; it is the Fixed-Share
+mixture that gives non-stationary tracking, and the regime monitor's two-part
+response (reset weights **and** flush context) that makes recovery fast after a
+switch (Section 5.14). The measured recovery gap is the whole point: a
+change detector that resets only the mixture weights leaves the universal
+predictor mispredicting from stale context — forgetting the context model is
+not optional. On the action side, a single prediction is never acted on
+directly; the threshold-aware knapsack turns the whole predictive distribution
+into a multi-tone power vector, and the reactive/follower mode (Section 5.15)
+shows that a slow hopper is jammable even when it is cryptographically
+unpredictable. The feasibility map (Section 5.16) names, per regime, which of
+these is available.
 
 **Honest limitations.** (1) `lcg_full` at `M = 16` is a weak showcase for
 algebraic cryptanalysis because its short period makes it trivially Markov; a

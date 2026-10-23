@@ -31,6 +31,9 @@ from experiments import (
     exp12_full_bank_confusion,
     exp13_coverage,
     exp14_next_channel_prediction,
+    exp15_regime_switch,
+    exp16_allocation,
+    exp17_feasibility,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -52,6 +55,9 @@ EXPERIMENTS = {
     "exp12": exp12_full_bank_confusion,
     "exp13": exp13_coverage,
     "exp14": exp14_next_channel_prediction,
+    "exp15": exp15_regime_switch,
+    "exp16": exp16_allocation,
+    "exp17": exp17_feasibility,
 }
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
@@ -133,6 +139,24 @@ def _headline(name: str, r: dict) -> dict:
             return {g: {"proposed_top1": d["proposed_steady"],
                         "id_only_top1": d["id_only_steady"]}
                     for g, d in per.items() if d["group"] == "new_algorithm"}
+        if name == "exp15":
+            return {m: {f"recovery@a{row['alpha']}": row["mean_recovery"] for row in rows}
+                    for m, rows in r["series"].items()} | {"detection": r["detection"]}
+        if name == "exp16":
+            kn = r["panelA"]["allocators"]["greedy_knapsack"]
+            cs = r["panelB"]["series"]["csprng"]["knapsack_reactive"]
+            return {"knapsack_reward_by_predictability":
+                        {k: round(v["mean"], 3) for k, v in
+                         zip(r["panelA"]["predictability"], kn)},
+                    "csprng_reactive_reward_by_dwell":
+                        {row["dwell"]: round(row["mean"], 3) for row in cs}}
+        if name == "exp17":
+            gA = r["panelA"]["grid"]
+            regions = r["meta"]["regions"]
+            flat = [v for row in gA for v in row]
+            return {"panelA_region_fraction":
+                        {regions[i]: round(flat.count(i) / len(flat), 3)
+                         for i in sorted(set(flat))}}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}
