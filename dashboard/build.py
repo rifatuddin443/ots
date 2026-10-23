@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from experiments import common as C
+from dashboard import adaptive as AD
 from dashboard import proof as P
 from dashboard import traces as T
 
@@ -30,6 +31,7 @@ DATA_TAG = '<script src="data.js"></script>'
 
 
 def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
+               n_regime_seeds: int = 10, n_alloc_seeds: int = 6,
                verbose: bool = True) -> dict:
     t0 = time.time()
     traces = []
@@ -54,6 +56,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         print("  proof: textbook Berlekamp-Massey vs state-filtered, sensor-aware vs naive")
     proof = {"bm_vs_filtered": P.bm_vs_filtered(n_proof_seeds),
              "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
+    adaptive = AD.build(n_regime_seeds, n_alloc_seeds, verbose=verbose)
     return {
         "version": 3,
         "generated": dt.date.today().isoformat(),
@@ -62,6 +65,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         "presets": T.PRESETS, "tour": T.TOUR,
         "search_sizes": T.search_sizes(engine),
         "traces": traces, "scoreboard": board, "proof": proof,
+        "adaptive": adaptive,
         "build_seconds": round(time.time() - t0, 1),
     }
 
@@ -101,6 +105,8 @@ def main(argv=None):
     p.add_argument("--traces", type=int, default=3, help="engagements per emitter x sensor preset")
     p.add_argument("--score-seeds", type=int, default=20, help="scoreboard seeds per emitter x preset")
     p.add_argument("--proof-seeds", type=int, default=40, help="seeds per point in the ablation proofs")
+    p.add_argument("--regime-seeds", type=int, default=10, help="seeds per alpha for regime-switch recovery")
+    p.add_argument("--alloc-seeds", type=int, default=6, help="seeds per point for the allocation reward")
     p.add_argument("--quick", action="store_true", help="1 engagement each, 4-seed scoreboard")
     p.add_argument("--standalone", type=Path, help="also write a single self-contained HTML page")
     p.add_argument("--reuse", action="store_true",
@@ -109,13 +115,16 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.quick:
         args.traces, args.score_seeds, args.proof_seeds = 1, 4, 4
+        args.regime_seeds, args.alloc_seeds = 3, 2
     if args.reuse:
         if not args.standalone:
             p.error("--reuse only makes sense with --standalone")
         print(f"[dashboard] wrote {write_standalone(DATA_JS.read_text(encoding='utf-8'), args.standalone)}")
         return
 
-    data = build_data(args.traces, args.score_seeds, args.proof_seeds, verbose=not args.quiet)
+    data = build_data(args.traces, args.score_seeds, args.proof_seeds,
+                      n_regime_seeds=args.regime_seeds, n_alloc_seeds=args.alloc_seeds,
+                      verbose=not args.quiet)
     js = to_js(data)
     DATA_JS.write_text(js, encoding="utf-8")
     n_ep = sum(r["n"] for r in data["scoreboard"]["rows"])

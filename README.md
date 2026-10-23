@@ -333,6 +333,11 @@ identifiable (see `tests/test_information_parity.py`). Recovery numbers obtained
 with illegitimate side-information would be void, and this is the first place a
 careful reviewer probes.
 
+## Documentation
+
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — running implementation log (what was built, where, and why); **append a dated entry for every change**.
+- [`docs/methodology_and_results.md`](docs/methodology_and_results.md) — full methodology and per-experiment results with figures.
+
 ## Grounding & ethics
 
 Parameter ranges are meant to be calibrated from public FHSS/drone-RF captures,
