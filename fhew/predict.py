@@ -65,6 +65,9 @@ class ChannelPredictor:
         horizon: int = 256,
         eta: float = 1.0,
         alpha: float = 0.02,
+        monitor: bool = False,
+        retain: float = 0.0,
+        detector_kwargs: dict | None = None,
     ):
         self.channels = channels
         self.M = channels.size
@@ -76,14 +79,43 @@ class ChannelPredictor:
             channels, experts, sensor=sensor, eta=eta, alpha=alpha,
             labels=[s.label for s in self.specs],
         )
+        # Optional regime monitor: watches the mixture's one-step surprise and, on
+        # a change-point, flushes the context (resets weights AND forgets the
+        # universal predictor's tables) so the re-point after a switch is fast
+        # rather than drawn out (thesis Section 6.4). Off by default so the
+        # stationary-source behaviour is unchanged.
+        self.retain = float(retain)
+        self._detector = None
+        self.alarms: list[int] = []
+        if monitor:
+            from fhew.regime import make_detector
+            kw = {"kind": "cusum", "k": 0.5, "h": 5.5, "warmup": 18, "ewma": 0.03}
+            kw.update(detector_kwargs or {})
+            self._detector = make_detector(**kw)
 
     # ------------------------------------------------------------------ driving
     def observe(self, obs: Observation) -> float:
-        """Consume one slot's observation; return the mixture's predictive loglik."""
-        return self.mixture.update(obs)
+        """Consume one slot's observation; return the mixture's predictive loglik.
+
+        With a regime monitor enabled, a detected change-point flushes the
+        mixture's context (the alarm slot is recorded in :attr:`alarms`).
+        """
+        ll = self.mixture.update(obs)
+        if self._detector is not None and self._clean(obs) is not None:
+            if self._detector.update(-ll):
+                self.mixture.forget(self.retain)
+                self.alarms.append(self.mixture.t)
+        return ll
+
+    @staticmethod
+    def _clean(obs: Observation):
+        return obs.detections[0].channel if len(obs.detections) == 1 else None
 
     def reset(self) -> None:
         self.mixture.reset()
+        if self._detector is not None:
+            self._detector.reset()
+        self.alarms = []
 
     # --------------------------------------------------------------- prediction
     def predict_next(self) -> np.ndarray:

@@ -32,7 +32,7 @@ DATA_TAG = '<script src="data.js"></script>'
 
 def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
                n_regime_seeds: int = 10, n_alloc_seeds: int = 6,
-               verbose: bool = True) -> dict:
+               n_scenario_seeds: int = 3, verbose: bool = True) -> dict:
     t0 = time.time()
     traces = []
     for pr in T.PRESETS:
@@ -57,6 +57,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
     proof = {"bm_vs_filtered": P.bm_vs_filtered(n_proof_seeds),
              "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
     adaptive = AD.build(n_regime_seeds, n_alloc_seeds, verbose=verbose)
+    scenario_traces, scenario_meta = build_scenarios(n_scenario_seeds, verbose=verbose)
     return {
         "version": 3,
         "generated": dt.date.today().isoformat(),
@@ -64,10 +65,36 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         "hypotheses": T.HYPOTHESES, "emitters": T.EMITTERS,
         "presets": T.PRESETS, "tour": T.TOUR,
         "search_sizes": T.search_sizes(engine),
-        "traces": traces, "scoreboard": board, "proof": proof,
-        "adaptive": adaptive,
+        "traces": traces + scenario_traces, "scoreboard": board, "proof": proof,
+        "adaptive": adaptive, "scenarios": scenario_meta,
         "build_seconds": round(time.time() - t0, 1),
     }
+
+
+#: presets the regime-switch scenarios are recorded under (the live demo lets you
+#: step through seeds within each).
+_SCENARIO_PRESETS = ("clear", "typical")
+
+
+def build_scenarios(n_seeds: int, *, verbose: bool = True):
+    """Record the playable regime-switch scenarios + their picker metadata."""
+    presets = {p["id"]: p for p in T.PRESETS}
+    seeds = C.seeds(n_seeds, base=1001)
+    traces, meta = [], []
+    for scen in T.SWITCH_SCENARIOS:
+        meta.append({"id": scen["id"], "name": scen["name"], "kind": scen["kind"],
+                     "blurb": scen["blurb"], "from_label": scen["from_label"],
+                     "to_label": scen["to_label"], "switch_at": T.SCENARIO_SWITCH})
+        for pid in _SCENARIO_PRESETS:
+            pr = presets[pid]
+            for s in seeds:
+                tr = T.record_switch_scenario(scen, pr["p_d"], pr["p_fa"], s, preset=pid)
+                traces.append(tr)
+                if verbose:
+                    print(f"  scenario {scen['id']:16s} {pid:8s} seed={s:<5d} "
+                          f"after: flush={tr['acc_flush_after']} vs {tr['acc_noflush_after']} "
+                          f"alarms={tr['alarms']}")
+    return traces, meta
 
 
 def to_js(data: dict) -> str:
@@ -107,6 +134,7 @@ def main(argv=None):
     p.add_argument("--proof-seeds", type=int, default=40, help="seeds per point in the ablation proofs")
     p.add_argument("--regime-seeds", type=int, default=10, help="seeds per alpha for regime-switch recovery")
     p.add_argument("--alloc-seeds", type=int, default=6, help="seeds per point for the allocation reward")
+    p.add_argument("--scenario-seeds", type=int, default=3, help="seeds per regime-switch scenario x preset")
     p.add_argument("--quick", action="store_true", help="1 engagement each, 4-seed scoreboard")
     p.add_argument("--standalone", type=Path, help="also write a single self-contained HTML page")
     p.add_argument("--reuse", action="store_true",
@@ -115,7 +143,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.quick:
         args.traces, args.score_seeds, args.proof_seeds = 1, 4, 4
-        args.regime_seeds, args.alloc_seeds = 3, 2
+        args.regime_seeds, args.alloc_seeds, args.scenario_seeds = 3, 2, 2
     if args.reuse:
         if not args.standalone:
             p.error("--reuse only makes sense with --standalone")
@@ -124,7 +152,7 @@ def main(argv=None):
 
     data = build_data(args.traces, args.score_seeds, args.proof_seeds,
                       n_regime_seeds=args.regime_seeds, n_alloc_seeds=args.alloc_seeds,
-                      verbose=not args.quiet)
+                      n_scenario_seeds=args.scenario_seeds, verbose=not args.quiet)
     js = to_js(data)
     DATA_JS.write_text(js, encoding="utf-8")
     n_ep = sum(r["n"] for r in data["scoreboard"]["rows"])

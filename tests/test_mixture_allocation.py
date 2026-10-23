@@ -335,3 +335,45 @@ def test_dwell_latency_grid_has_reactive_band():
     from fhew.feasibility import REGIONS
     react = REGIONS.index("reactive_follower")
     assert (grid == react).any()                   # a non-empty reactive region
+
+
+# ============================ 7. ChannelPredictor regime flush (live-demo path)
+def test_predictor_mixture_forget_flushes_and_reflattens():
+    from fhew.experts import FixedShareMixture, ContextMixingHypothesis, build_hypothesis, HypothesisSpec
+    ch = ChannelSet.of_size(M)
+    experts = [ContextMixingHypothesis("cm", ch, max_order=2),
+               build_hypothesis(HypothesisSpec("mk", "markov", "markov"), ch, 60)]
+    mix = FixedShareMixture(ch, experts, sensor=SensorModel(0.98, 0.0), eta=1.0, alpha=0.02)
+    from fhew.sensor import Detection, Observation
+    for t, c in enumerate([0, 1, 2, 3] * 12):
+        mix.update(Observation(t, (Detection(t, c),), M))
+    mix.forget(0.0)
+    # weights re-flattened to uniform and the context-mixing tables flushed
+    assert np.allclose(np.exp(mix.log_w), 1.0 / mix.n)
+    assert sum(len(tbl) for tbl in experts[0].tables) == 0
+
+
+def test_channel_predictor_monitor_flushes_and_recovers_faster():
+    from fhew.predict import ChannelPredictor
+    from fhew.config import prediction_expert_specs
+    from fhew.scenarios import make_switch_episode
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(0.98, 0.0)
+    specs = prediction_expert_specs(M)
+
+    def recov(monitor):
+        rng = np.random.default_rng(4)
+        ep = make_switch_episode([("markov", {"alpha": 0.03}), ("markov", {"alpha": 0.03})],
+                                 ch, sensor, 220, rng, switch_at=110)
+        pred = ChannelPredictor(ch, sensor, specs=specs, horizon=224, monitor=monitor, retain=0.0)
+        t1 = []
+        for t, o in enumerate(ep.observations):
+            pred.observe(o)
+            if t < 219:
+                t1.append(pred.predict_top1() == int(ep.true_channels[t + 1]))
+        return recovery_time(t1, 110, window=6, thresh=0.6), pred.alarms
+
+    on, alarms = recov(True)
+    off, _ = recov(False)
+    assert alarms, "monitor should fire on the switch"
+    assert np.isfinite(on) and on <= off     # flushing never recovers slower here

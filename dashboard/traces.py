@@ -33,6 +33,7 @@ from fhew.experts import (
 from fhew.generators import make_generator
 from fhew.likelihood import SensorAwareEmission
 from fhew.predict import ChannelPredictor
+from fhew.scenarios import make_switch_episode
 from fhew.sensor import SensorModel
 from fhew.sim import Episode, decide_outcome, run_sprt
 
@@ -335,6 +336,98 @@ def record_engagement(engine: Engine, gen_name: str, seed: int, *, preset: str =
         "secret_match": recovered[1],
         "baseline": {"decision": base.decision_label, "declared": base.declared,
                      "tau": base.tau_stop, "correct": base.correct},
+    }
+
+
+# ----------------------------------------------------------- regime scenarios
+#: a longer window than the identification demo, so the switch and the recovery
+#: both have room to play out.
+SCENARIO_WINDOW = 200
+SCENARIO_SWITCH = 100
+
+#: Playable "the radio changes recipe mid-contact" scenarios for the live demo.
+#: Each is two generator segments concatenated at ``SCENARIO_SWITCH``; the
+#: next-channel predictor (Fixed-Share + universal) re-points on its own, and the
+#: regime monitor flushes its memory so the re-point is fast.
+SWITCH_SCENARIOS = [
+    {"id": "lfsr_to_markov", "name": "Register → statistical", "kind": "Recipe change",
+     "from": ("lfsr", {"length": 7}), "to": ("markov", {"alpha": 0.04}),
+     "from_label": "Shift register (LFSR)", "to_label": "Statistical hopper",
+     "blurb": "A shift-register radio (predicted near-perfectly) switches to a "
+              "statistical hopper. Accuracy dives at the switch, then recovers."},
+    {"id": "chaos_to_markov", "name": "Chaos → statistical", "kind": "Recipe change",
+     "from": ("logistic", {"r": 3.95}), "to": ("markov", {"alpha": 0.04}),
+     "from_label": "Chaotic map", "to_label": "Statistical hopper",
+     "blurb": "A chaotic radio switches to a statistical hopper mid-engagement."},
+]
+
+
+#: detector tuned for the demo: one clean alarm near the switch, few false ones
+SCENARIO_DETECTOR = {"h": 8.0, "warmup": 30, "k": 0.5, "ewma": 0.03}
+
+
+def _pred_run(ch, sensor, specs, ep, *, monitor, window):
+    """Run the next-channel predictor over an episode; return per-slot records."""
+    pred = ChannelPredictor(ch, sensor, specs=specs, horizon=window + 4,
+                            monitor=monitor, retain=0.0,
+                            detector_kwargs=SCENARIO_DETECTOR if monitor else None)
+    truth = np.asarray(ep.true_channels)
+    fc, kappa, dom, hit = [], [], [], []
+    for t, o in enumerate(ep.observations):
+        pred.observe(o)
+        nxt = pred.predict_next()
+        fc.append([int(round(1000 * float(x))) for x in nxt])
+        kappa.append(round(float(pred.predictability()), 4))
+        dom.append(pred.dominant_expert())
+        if t < window - 1:
+            hit.append(int(int(np.argmax(nxt)) == int(truth[t + 1])))
+    return {"fc": fc, "kappa": kappa, "dom": dom, "hit": hit, "alarms": list(pred.alarms)}
+
+
+def record_switch_scenario(scenario: dict, p_d: float, p_fa: float, seed: int, *,
+                           preset: str = "custom", window: int = SCENARIO_WINDOW,
+                           switch_at: int = SCENARIO_SWITCH) -> dict:
+    """Record one regime-switch engagement for the live demo.
+
+    The predictor is run twice on the *same* observations: once with the regime
+    monitor (memory flush on a detected switch), once without, so the demo can
+    show that flushing the context re-points the prediction faster.
+    """
+    ch = ChannelSet.of_size(M)
+    sensor = SensorModel(p_d=p_d, p_fa=p_fa)
+    specs = prediction_expert_specs(M)
+    rng = np.random.default_rng(seed)
+    ep = make_switch_episode([scenario["from"], scenario["to"]], ch, sensor, window, rng,
+                             switch_at=switch_at)
+    flush = _pred_run(ch, sensor, specs, ep, monitor=True, window=window)
+    plain = _pred_run(ch, sensor, specs, ep, monitor=False, window=window)
+    truth = np.asarray(ep.true_channels)
+
+    def _acc(hit, start):
+        xs = hit[start:]
+        return round(float(np.mean(xs)), 4) if xs else None
+
+    return {
+        "emitter": scenario["id"], "scenario": True, "preset": preset, "seed": int(seed),
+        "p_d": p_d, "p_fa": p_fa, "M": M, "window": window,
+        "switch_at": int(switch_at),
+        "from_label": scenario["from_label"], "to_label": scenario["to_label"],
+        "alarms": flush["alarms"],
+        "truth": [int(c) for c in truth],
+        "dets": [sorted(int(c) for c in o.detected_channels) for o in ep.observations],
+        # the flush predictor's forecast drives the hop chart + strip (fc / fc_pred)
+        "fc": flush["fc"], "fc_pred": flush["fc"],
+        "kappa_pred": flush["kappa"], "dom": flush["dom"],
+        "hit_flush": flush["hit"], "hit_noflush": plain["hit"],
+        "acc_flush_after": _acc(flush["hit"], switch_at),
+        "acc_noflush_after": _acc(plain["hit"], switch_at),
+        "acc_before": _acc(flush["hit"][:switch_at], 0),
+        # bank-centric fields the shared live code may touch (kept inert here)
+        "labels": ["H0"], "target": "", "declared": False, "tau": None,
+        "decision": "unknown", "correct": None, "new_algo": False,
+        "post": [], "alive": [], "fc_bank": [],
+        "secret_true": None, "secret_recovered": None, "secret_match": None,
+        "baseline": None,
     }
 
 

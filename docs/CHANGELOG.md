@@ -11,6 +11,48 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-10-23 (later) — Live demo: playable regime switches + prediction-accuracy readout
+
+Made the adaptive behaviour playable in the **Live demo** page and surfaced a
+running next-hop prediction accuracy on every run.
+
+### Prediction accuracy (all live runs)
+- An always-on **"Next-hop prediction"** banner shows the predictor's running
+  accuracy (`X of Y right · Z%`) with a bar against the 1/M random baseline,
+  updated hop by hop. Uses the already-recorded `fc_pred` (the Fixed-Share
+  predictor's forecast) vs the truth.
+
+### Playable regime-switch scenarios (the adaptive part, hop by hop)
+- New picker group **"The radio changes recipe (adaptive)"** in the Live-demo
+  settings, with two scenarios: `lfsr_to_markov` and `chaos_to_markov`. The radio
+  switches its generator at hop 100; you watch accuracy dip and the predictor
+  re-point.
+- Scenario render mode in `dashboard/views/live.js`: scenario narration, an
+  event log (on A → switched to B → change detected/memory flushed), the live
+  dominant expert, and a **flush vs no-flush** accuracy comparison, plus an
+  **accuracy-over-time** timeline with switch/flush markers. The bank
+  identification race/verdict are swapped out for scenario traces.
+- Data: `dashboard/traces.py::record_switch_scenario` runs the predictor twice on
+  the same observations (monitor on/off) so the demo shows the flush recovers
+  faster; `dashboard/build.py::build_scenarios` records them; metadata in
+  `OTS_DATA.scenarios`. Scenarios are kept **out of `OTS.emitters`** so the
+  scoreboard and other pages are unaffected.
+
+### Enabling the context flush in the live predictor
+- Added `FixedShareMixture.forget(retain)` to `fhew/experts.py` (the mixture the
+  live `ChannelPredictor` uses) — flushes member contexts and re-flattens weights.
+- `ChannelPredictor` (`fhew/predict.py`) gained an **opt-in regime monitor**
+  (`monitor=True`): a CUSUM on the mixture surprise that flushes the context on a
+  detected switch (`alarms` records the slots). Off by default, so stationary-source
+  behaviour is unchanged.
+- Tests: 2 added to `tests/test_mixture_allocation.py` (mixture forget; predictor
+  monitor flush recovers at least as fast).
+
+Rebuild the dashboard data + standalone with `python -m dashboard.build`
+(`--scenario-seeds N`; `--quick` shrinks it).
+
+---
+
 ## 2026-10-23 — Confidence-adaptive layer: mixture, regime monitor, allocation, dashboard
 
 Built the Revision-3 layer on top of the conference identification bank. All of

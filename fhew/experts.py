@@ -1449,6 +1449,23 @@ class FixedShareMixture(Expert):
         H = float(-(nz * np.log(nz)).sum())
         return float(1.0 - H / np.log(self.M))
 
+    def forget(self, retain: float = 0.0) -> None:
+        """Flush the mixture after a regime alarm (thesis Section 6.4).
+
+        Re-flattens the expert weights toward uniform and forgets each expert's
+        learned context (every expert implements ``forget``). The share floor
+        alone lets a dead expert recover, but the universal predictor's context
+        tables are still full of the *old* generator's patterns; forgetting them
+        is what makes the re-point fast rather than drawn out.
+        """
+        retain = float(np.clip(retain, 0.0, 1.0))
+        for h in self.experts:
+            h.forget(retain)
+        self.log_w = retain * self.log_w + (1.0 - retain) * np.full(self.n, -np.log(self.n))
+        self.log_w -= logsumexp(self.log_w)
+        self._next_hops = np.tile(self.channels.uniform(), (self.n, 1))
+        self._last_predict = self.channels.uniform()
+
     @staticmethod
     def _clean_channel(obs: Observation) -> int | None:
         if len(obs.detections) == 1:

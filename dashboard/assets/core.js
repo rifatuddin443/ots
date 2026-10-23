@@ -94,9 +94,16 @@ window.OTS = (function () {
   if (DATA) {
     for (const h of DATA.hypotheses) HYP.set(h.id, h);
     for (const e of DATA.emitters) EMIT.set(e.id, e);
+    // Regime-switch scenarios are selectable in the live demo but kept out of
+    // OTS.emitters, so the scoreboard and other pages are unaffected; register
+    // their metadata so emitName/emitter resolve a scenario id.
+    for (const s of (DATA.scenarios || [])) {
+      if (!EMIT.has(s.id)) EMIT.set(s.id, { ...s, scenario: true });
+    }
   }
   OTS.hypotheses = DATA ? DATA.hypotheses : [];
   OTS.emitters = DATA ? DATA.emitters : [];
+  OTS.scenarios = DATA && DATA.scenarios ? DATA.scenarios : [];
   OTS.presets = DATA ? DATA.presets : [];
   OTS.searchSizes = DATA ? DATA.search_sizes || {} : {};
   const hid = (id) => (id === "unknown" ? "H0" : id);
@@ -671,6 +678,18 @@ window.OTS = (function () {
         },
       }, OTS.el("b", {}, e.name), OTS.el("small", {}, e.id === "csprng" ? "control: unbreakable"
         : e.new_algo ? "new · no expert in bank" : e.kind))))));
+    if (OTS.scenarios && OTS.scenarios.length) {
+      d.append(section("The radio changes recipe (adaptive)",
+        OTS.el("div", { class: "opt-grid" }, OTS.scenarios.map((s) => OTS.el("button", {
+          class: "opt" + (SC.emitter === s.id ? " sel" : ""), title: s.blurb,
+          onclick: () => {
+            tour.stop();
+            const pr = OTS.tracesFor(s.id, SC.preset).length ? SC.preset
+              : (OTS.tracesFor(s.id, "clear").length ? "clear" : "typical");
+            OTS.select(s.id, pr, OTS.bestRun(s.id, pr));
+          },
+        }, OTS.el("b", {}, s.name), OTS.el("small", {}, "switches mid-engagement"))))));
+    }
     const presetBtns = OTS.presets.map((p) => OTS.el("button", {
       class: "btn" + (SC.preset === p.id ? " sel" : ""),
       onclick: () => { tour.stop(); OTS.select(SC.emitter, p.id, OTS.bestRun(SC.emitter, p.id)); },

@@ -108,7 +108,28 @@
   .live-strip > div { border-left: 0; border-top: 1px solid var(--grid); padding: 9px 0; }
   .live-strip > div:first-child { border-top: 0; }
   .live-narr { font-size: 15px; }
-}`;
+}
+.live-acc { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 16px; }
+.live-acc-l { font: 600 10.5px/1.2 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); flex: none; }
+.live-acc-v { font: 700 22px/1 var(--sans); color: var(--ink); letter-spacing: -0.01em; }
+.live-acc-v b { font-family: var(--mono); }
+.live-acc-sub { font-size: 12.5px; color: var(--ink-2); }
+.live-acc-bar { flex: 1 1 180px; min-width: 120px; position: relative; height: 12px; border-radius: 6px; background: #16233a; overflow: hidden; }
+.live-acc-bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; transition: width 0.3s ease; }
+.live-acc-rand { position: absolute; top: -3px; bottom: -3px; width: 2px; background: rgba(232,238,247,0.7); }
+.live-acc-rand span { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); white-space: nowrap; font: 10px var(--mono); color: var(--muted); }
+.live-ev { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.live-ev-row { display: flex; align-items: baseline; gap: 9px; font-size: 13px; }
+.live-ev-row .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-top: 3px; }
+.live-ev-row b { font-family: var(--mono); color: var(--ink); }
+.live-ev-row.pending { opacity: 0.45; }
+.live-recipe { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.live-recipe i { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.live-cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.live-cmp > div { padding: 10px 12px; border: 1px solid var(--grid); border-radius: 10px; }
+.live-cmp .n { font: 700 20px/1 var(--mono); }
+.live-cmp .l { font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+.live-cmp .flush .n { color: var(--good-ink); }`;
   function injectCss() {
     if (document.getElementById("css-live")) return;
     document.head.append(el("style", { id: "css-live" }, CSS));
@@ -682,6 +703,134 @@
     return { render, reset() { trRef = null; } };
   }
 
+  // ======================================================= prediction accuracy
+  /** Running next-hop prediction accuracy up to hop t, from the predictor's
+   *  forecasts (fc_pred) against the truth. Falls back to the bank forecast. */
+  function predAcc(tr, t) {
+    if (tr.fc_pred) return T.predHitStats(tr, t);
+    return T.hitStats(tr, t);
+  }
+  /** Accuracy of the no-flush predictor (scenario comparison), up to hop t. */
+  function noflushAcc(tr, t) {
+    if (!tr.hit_noflush) return null;
+    let n = 0, hit = 0;
+    for (let j = 1; j < t && j - 1 < tr.hit_noflush.length; j++) { n++; hit += tr.hit_noflush[j - 1]; }
+    return n ? hit / n : null;
+  }
+  function accAfter(hitArr, from, t) {
+    if (!hitArr) return null;
+    let n = 0, hit = 0;
+    for (let j = from; j < t && j - 1 < hitArr.length && j >= 1; j++) { n++; hit += hitArr[j - 1]; }
+    return n ? { hit, n, rate: hit / n } : null;
+  }
+
+  function renderAccBanner(box, tr, t) {
+    const chance = 1 / tr.M, h = predAcc(tr, t);
+    let main, sub;
+    if (!h || h.n < 2) { main = el("span", { class: "live-acc-v" }, "warming up…"); sub = "needs a few hops before it starts calling"; }
+    else {
+      main = el("span", { class: "live-acc-v" }, el("b", {}, `${h.hit}`), ` of ${h.n} right`, el("span", { style: "color:var(--muted)" }, `  ·  ${Math.round(h.rate * 100)}%`));
+      const edge = h.rate / chance;
+      sub = `random guessing gets 1 in ${tr.M} (${Math.round(chance * 100)}%)` + (edge >= 1.5 ? ` — ${edge.toFixed(1)}× better than chance` : "");
+    }
+    const rate = h && h.n >= 2 ? h.rate : 0;
+    const bar = el("div", { class: "live-acc-bar" },
+      el("i", { style: `width:${(clamp(rate, 0, 1) * 100).toFixed(1)}%;background:${rate >= 1.5 * chance ? "var(--good)" : "var(--accent)"}` }),
+      el("span", { class: "live-acc-rand", style: `left:${(chance * 100).toFixed(1)}%` }, el("span", {}, "random")));
+    OTS.clear(box).append(
+      el("span", { class: "live-acc-l" }, "Next-hop prediction"),
+      el("div", {}, main, el("div", { class: "live-acc-sub" }, sub)),
+      bar);
+  }
+
+  // ============================================================ scenario mode
+  const SCEN_COL = { from: "#56B4E9", to: "#34c79a" };
+  function activeRecipe(tr, t) { return t > tr.switch_at ? "to" : "from"; }
+  function recipeChip(tr, which) {
+    return el("span", { class: "live-recipe" }, el("i", { style: `background:${SCEN_COL[which]}` }),
+      which === "from" ? tr.from_label : tr.to_label);
+  }
+  function firstAlarm(tr) { return (tr.alarms && tr.alarms.length) ? tr.alarms.find((a) => a >= tr.switch_at) || null : null; }
+
+  function scenNarration(tr, t) {
+    const sw = tr.switch_at, al = firstAlarm(tr);
+    if (t === 0) return ["SCENARIO", ["The radio starts on ", recipeChip(tr, "from"), ". Press Play — OTS predicts each next hop."]];
+    if (t <= sw) return ["BEFORE SWITCH", ["OTS is predicting ", recipeChip(tr, "from"), "'s hops. Accuracy is climbing as it learns the pattern."]];
+    if (al && t < al) return ["RADIO CHANGED", [el("b", {}, `Hop ${sw}: the radio switched to `), recipeChip(tr, "to"), ". The old prediction is suddenly wrong — watch the accuracy dip."]];
+    if (al && t >= al && t < al + 12) return ["MEMORY FLUSHED", [el("b", {}, `Hop ${al}: the change monitor fired`), " and flushed the predictor's memory of the old pattern, so it re-points onto ", recipeChip(tr, "to"), " fast."]];
+    return ["RE-POINTED", ["OTS has re-pointed onto ", recipeChip(tr, "to"), " and is predicting its hops again — no manual switching."]];
+  }
+
+  function renderScenStrip(box, tr, t) {
+    const ended = t >= tr.window - 1;
+    // 1. the call for the next hop
+    let c1;
+    if (t === 0) c1 = cell("Next hop", "waiting for the first hop", "OTS needs to hear a hop first");
+    else if (ended) c1 = cell("Next hop", "recording ended", `after ${tr.window} hops`);
+    else { const f = T.forecastTop(tr, t); c1 = cell(`OTS's call: hop ${t + 1}`, [el("b", {}, "channel " + fmt.ch(f.ch))], `${sure(f.p)} sure`); }
+    // 2. last result
+    let c2;
+    const f0 = t >= 1 ? T.forecastTop(tr, t - 1) : null;
+    if (!f0) c2 = cell("Last hop", "no call yet", null);
+    else { const ok = f0.ch === tr.truth[t - 1];
+      c2 = cell(`Hop ${t} result`, `called ${fmt.ch(f0.ch)}, it was ${fmt.ch(tr.truth[t - 1])}`,
+        ok ? el("span", { class: "live-ok" }, "✓ right") : el("span", { class: "live-no" }, "✗ wrong")); }
+    // 3. which recipe is live now
+    const which = activeRecipe(tr, t);
+    const c3 = cell("Radio's recipe now", [recipeChip(tr, which)], which === "from" ? "the original pattern" : `switched at hop ${tr.switch_at}`);
+    OTS.clear(box).append(c1, c2, c3);
+  }
+
+  function renderScenStatus(card, tr, t) {
+    const sw = tr.switch_at, al = firstAlarm(tr), which = activeRecipe(tr, t);
+    const dom = tr.dom && t > 0 ? tr.dom[Math.min(t, tr.dom.length) - 1] : null;
+    const kap = tr.kappa_pred && t > 0 ? tr.kappa_pred[Math.min(t, tr.kappa_pred.length) - 1] : null;
+    const evRow = (on, color, label, body) => el("div", { class: "live-ev-row" + (on ? "" : " pending") },
+      el("span", { class: "dot", style: `background:${on ? color : "#4a5568"}` }), el("div", {}, label, body ? [" ", body] : null));
+    const body = [
+      el("div", { class: "live-vsub" }, "The radio changes its hop recipe mid-engagement. OTS re-points its next-hop prediction on its own."),
+      el("div", { class: "live-ev" },
+        evRow(t >= 1, SCEN_COL.from, el("b", {}, `Hops 1–${sw}: `), ["on ", recipeChip(tr, "from")]),
+        evRow(t > sw, "#e4714a", el("b", {}, `Hop ${sw}: `), ["switched to ", recipeChip(tr, "to")]),
+        al ? evRow(t >= al, "#e8a33d", el("b", {}, `Hop ${al}: `), "change detected → memory flushed")
+           : evRow(false, "#e8a33d", "change monitor", "watching for a switch")),
+    ];
+    if (dom) body.push(el("div", { class: "live-why", style: "margin-top:14px" },
+      "Predicting with: ", el("b", { class: "mono" }, dom === "context_mixing" ? "universal predictor" : shortName(dom)),
+      kap != null ? ` · sharpness ${Math.round(kap * 100)}%` : ""));
+    // flush vs no-flush comparison, after the switch, up to now
+    const fl = accAfter(tr.hit_flush, sw, t), nf = accAfter(tr.hit_noflush, sw, t);
+    if (fl && fl.n >= 3) body.push(el("div", { class: "live-cmp" },
+      el("div", { class: "flush" }, el("div", { class: "n" }, Math.round(fl.rate * 100) + "%"), el("div", { class: "l" }, "with memory flush (since the switch)")),
+      el("div", {}, el("div", { class: "n" }, nf ? Math.round(nf.rate * 100) + "%" : "—"), el("div", { class: "l" }, "without the flush"))));
+    OTS.clear(card).append(
+      el("div", { class: "live-vtop" }, el("p", { class: "card-t" }, "What's happening"),
+        status(which === "from" ? "live" : (al && t >= al ? "good" : "warn"), which === "from" ? "◉" : (al && t >= al ? "✓" : "◐"),
+          which === "from" ? "Predicting" : (al && t >= al ? "Re-pointed" : "Adapting"))),
+      ...body, el("div", { class: "card-foot" }, OTS.sensorLabel(tr)));
+  }
+
+  function accChartSpec(tr, t) {
+    const sw = tr.switch_at, al = firstAlarm(tr), W = tr.window;
+    const cum = (arr) => { const pts = []; let n = 0, h = 0; for (let j = 0; j < arr.length && j < t; j++) { n++; h += arr[j]; pts.push([j + 2, h / n]); } return pts; };
+    const series = [];
+    if (tr.hit_flush) series.push({ id: "flush", label: "with memory flush", color: "#34c79a", width: 2.6, points: cum(tr.hit_flush) });
+    if (tr.hit_noflush) series.push({ id: "noflush", label: "without flush", color: "#8b95a7", dash: "5 4", points: cum(tr.hit_noflush) });
+    // combine the two markers when the alarm lands right at the switch, so their
+    // labels do not overlap; otherwise show both.
+    let vLines;
+    if (al && al - sw <= 8) vLines = [{ x: sw, label: `switch → flushed (hop ${al})`, color: "#e8a33d" }];
+    else { vLines = [{ x: sw, label: "recipe changed", color: "#e4714a" }]; if (al) vLines.push({ x: al, label: "memory flushed", color: "#e8a33d" }); }
+    return {
+      height: 250, ariaLabel: "Running next-hop prediction accuracy over the engagement, with and without the memory flush",
+      x: { label: "hop number", min: 1, max: W },
+      y: { label: "running accuracy", min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1], format: (v) => Math.round(v * 100) + "%" },
+      tooltipFormat: (v) => Math.round(v * 100) + "%",
+      refLines: [{ y: 1 / tr.M, label: "random", below: true }],
+      vLines, series, endLabels: 2,
+    };
+  }
+
   // ================================================================= view
   OTS.views.register({
     id: "live", nav: "Live demo", title: "Watch it work", hint: "One engagement, hop by hop",
@@ -697,16 +846,26 @@
           el("p", { class: "card-t" }, "Hop chart"),
           el("p", { class: "card-k" }, "Cyan rings are OTS's calls, made in advance."))),
         legendBox, hopBox, hopFoot);
+      const accBanner = el("div", { class: "card live-acc", "aria-label": "Prediction accuracy" });
       const strip = el("div", { class: "card live-strip", "aria-label": "Next hop" });
       const verdict = el("div", { class: "card live-verdict" });
       const raceCard = el("div", { class: "card live-race" });
-      root.append(el("div", { class: "page live-page" }, narr,
+      // scenario-only cards (shown when the radio changes recipe mid-engagement)
+      const scenStatus = el("div", { class: "card live-verdict", hidden: true });
+      const accTimelineBox = el("div");
+      const accTimeline = el("div", { class: "card", hidden: true },
+        el("div", { class: "card-h" }, el("div", {},
+          el("p", { class: "card-t" }, "Prediction accuracy over time"),
+          el("p", { class: "card-k" }, "Flushing the old pattern re-points faster after the switch"))),
+        accTimelineBox);
+      root.append(el("div", { class: "page live-page" }, narr, accBanner,
         el("div", { class: "live-cols" },
           el("div", { class: "live-col" }, hopCard, strip),
-          el("div", { class: "live-col" }, verdict, raceCard))));
+          el("div", { class: "live-col" }, verdict, raceCard, scenStatus, accTimeline))));
 
       const chart = makeHopChart(hopBox, legendBox, hopTip);
       const race = makeRace(raceCard);
+      const accChart = OTS.chart.line(accTimelineBox, { height: 250, x: { min: 1, max: 2 }, y: { min: 0, max: 1 }, series: [] });
       let narrKey = "", footKey = "";
 
       function renderNarr(tr, t) {
@@ -728,15 +887,34 @@
           ? "Ghosts and missed hops are drawn for you only: OTS never sees them."
           : "Newest hop on the right. Press T to reveal the sensor's mistakes.";
       }
+      function renderScenNarr(tr, t) {
+        const [tag, parts] = scenNarration(tr, t);
+        const text = el("span", { class: "live-narr-x" }, parts);
+        const key = tag + "|" + text.textContent;
+        if (key === narrKey) return;
+        narrKey = key;
+        OTS.clear(narr).append(el("span", { class: "tag" }, tag), text);
+      }
       function renderAll(glide) {
         const tr = P.trace; if (!tr) return;
         const t = P.t;
-        renderNarr(tr, t);
+        const scen = !!tr.scenario;
+        verdict.hidden = scen; raceCard.hidden = scen;
+        scenStatus.hidden = !scen; accTimeline.hidden = !scen;
+        renderAccBanner(accBanner, tr, t);
         chart.render();
-        renderStrip(strip, tr, t);
-        renderVerdict(verdict, tr, t);
-        race.render(tr, t, !!glide);
-        renderFoot();
+        if (scen) {
+          renderScenNarr(tr, t);
+          renderScenStrip(strip, tr, t);
+          renderScenStatus(scenStatus, tr, t);
+          accChart.update(accChartSpec(tr, t));
+        } else {
+          renderNarr(tr, t);
+          renderStrip(strip, tr, t);
+          renderVerdict(verdict, tr, t);
+          race.render(tr, t, !!glide);
+          renderFoot();
+        }
       }
 
       const subs = [
@@ -754,13 +932,14 @@
         OTS.on("prefs", () => { chart.render(); renderFoot(); }),
         OTS.on("frame", (now) => chart.frame(now)),
         OTS.on("resize", () => chart.render()),
-        OTS.on("tour", () => { const tr = P.trace; if (tr) renderNarr(tr, P.t); }),
-        OTS.on("liveloading", () => { const tr = P.trace; if (tr) renderNarr(tr, P.t); }),
+        OTS.on("tour", () => { const tr = P.trace; if (tr) (tr.scenario ? renderScenNarr : renderNarr)(tr, P.t); }),
+        OTS.on("liveloading", () => { const tr = P.trace; if (tr) (tr.scenario ? renderScenNarr : renderNarr)(tr, P.t); }),
       ];
       renderAll();
       return () => {
         for (const off of subs) off();
         chart.destroy();
+        accChart.destroy();
         OTS.tip.hide();
       };
     },
