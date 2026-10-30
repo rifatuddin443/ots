@@ -2613,10 +2613,39 @@ window.OTS = (function () {
 .ctl-page { container: ctl / inline-size; }
 .ctl-cols { display: grid; grid-template-columns: minmax(0, 1fr) clamp(320px, 34%, 400px); gap: 18px; align-items: start; }
 .ctl-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.ctl-top { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 18px; align-items: stretch; }
-@container ctl (max-width: 980px) { .ctl-top { grid-template-columns: minmax(0, 1fr); } }
+.ctl-shell { display: grid; grid-template-columns: minmax(0, 1fr) var(--ctl-panel-w, 330px); gap: 18px; align-items: start; }
+.ctl-shell.closed { grid-template-columns: minmax(0, 1fr); }
+.ctl-panel {
+  position: sticky; top: 84px; max-height: calc(100vh - 100px); overflow-y: auto; padding: 16px 16px 20px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--side);
+}
+.ctl-shell.closed .ctl-panel { display: none; }
+.ctl-panel-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--grid); }
+.ctl-panel-h h2 { margin: 0; font: 600 12px/1.2 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.ctl-psec { padding: 12px 0; border-bottom: 1px solid var(--grid); }
+.ctl-psec:last-child { border-bottom: 0; }
+.ctl-psec > .ctl-group-l { margin-bottom: 8px; }
+.ctl-psec .seg .btn { padding: 6px 10px; }
+.ctl-tab {
+  position: fixed; right: 0; top: 46%; z-index: 40; writing-mode: vertical-rl; padding: 14px 7px; border-radius: 8px 0 0 8px;
+  border: 1px solid rgba(34, 211, 238, 0.55); border-right: 0; background: var(--side); color: var(--accent-ink);
+  font: 700 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; box-shadow: -6px 0 20px rgba(0, 0, 0, 0.35);
+}
+.ctl-tab:hover { background: var(--raise); }
+.ctl-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ctl-backdrop { display: none; }
+.ctl-chip { cursor: pointer; text-transform: none; letter-spacing: 0.02em; font-weight: 600; }
+.ctl-chip:hover { color: var(--ink); border-color: rgba(34, 211, 238, 0.6); }
+@media (max-width: 1100px) {
+  .ctl-shell, .ctl-shell.closed { grid-template-columns: minmax(0, 1fr); }
+  .ctl-shell:not(.closed) .ctl-panel {
+    position: fixed; right: 0; top: 0; bottom: 0; max-height: none; width: min(340px, 92vw); z-index: 60; border-radius: 0;
+    box-shadow: -20px 0 50px rgba(0, 0, 0, 0.5);
+  }
+  .ctl-shell:not(.closed) .ctl-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, 0.45); }
+}
 @container ctl (max-width: 820px) { .ctl-cols { grid-template-columns: minmax(0, 1fr); } .ctl-col { display: contents; } }
-.ctl-field { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 6px 12px; align-items: center; margin-top: 10px; }
+.ctl-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin-top: 2px; }
 .ctl-field > span { font: 600 10.5px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 .ctl-field .seg .btn { padding: 6px 10px; }
 .ctl-num { width: 74px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--surface); font: 600 13px var(--mono); }
@@ -2744,6 +2773,11 @@ window.OTS = (function () {
     playing: false, busy: false, creating: false, speed: 3, timer: 0, error: null,
   };
   let ui = null;        // render hooks of the mounted page (null when unmounted)
+  const PANEL_KEY = "ots.control.panel";
+  let panelOpen = (() => {
+    try { const v = localStorage.getItem(PANEL_KEY); if (v != null) return v === "1"; } catch (_) { /* storage unavailable */ }
+    return window.innerWidth > 1100;
+  })();
 
   const sensorOf = (cfg) => (cfg.sensor === "custom" ? { id: "custom", name: "Custom", ...cfg.custom } : SENSORS().find((s) => s.id === cfg.sensor));
   const done = () => !!(S.sess && S.recs.length >= S.sess.hops);
@@ -3125,7 +3159,7 @@ window.OTS = (function () {
         { exact: "✓ exact secret", equivalent: "✓ equivalent key", family: "≈ neighbouring parameter", model: "✓ model fitted", mismatch: "≠ not the exact secret" }[id.match] || "")]]);
     }
     if (lastTx && lastTx.regime && lastTx.regime.secret) kv.push(["True secret", el("span", { class: "mono" }, lastTx.regime.secret)]);
-    const carrier = { bank: "the identified expert", context_mixing: "the universal learner (context mixing)", phase_space: "the phase-space predictor" }[id.carrier] || id.carrier;
+    const carrier = { bank: "the identified expert", context_mixing: "the universal learner (context mixing)", phase_space: "the phase-space predictor", recurrence: "the recurrence learner (fits a modular linear rule)" }[id.carrier] || id.carrier;
     kv.push(["Predicting", done() ? "session finished" : [el("b", {}, `channel ${fmt.ch(r.next)}`), ` next · ${sure(r.next_p)} sure`]]);
     kv.push(["Carried by", carrier]);
     card.append(el("dl", { class: "ctl-kv" }, kv.map(([k, val]) => [el("dt", {}, k), el("dd", {}, val)])));
@@ -3195,7 +3229,7 @@ window.OTS = (function () {
   // every hop would replace a button between mouse-down and mouse-up and lose the click.
   function toggleSel(btns, pred) { for (const [v, b] of btns) b.classList.toggle("sel", pred(v)); }
 
-  function makeSetup(card) {
+  function makePanel(panel, onClose) {
     const numInput = (key, [lo, hi]) => {
       const inp = el("input", { class: "ctl-num", type: "number", min: lo, max: hi, step: 1, value: S.cfg[key], "aria-label": key === "M" ? "Number of channels" : "Number of hops" });
       inp.addEventListener("change", () => {
@@ -3222,15 +3256,29 @@ window.OTS = (function () {
     const help = el("div", { class: "ctl-help" });
     const startBtn = el("button", { class: "btn", onclick: () => newSession() });
     const status = el("span", { class: "small ink2" });
-    card.append(
-      el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "1 · Engagement setup"),
-        el("p", { class: "card-d" }, "Channels, length and sensor for the next session."))),
-      el("div", { class: "ctl-field" }, el("span", {}, "Channels"), el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chM.map((x) => x[1])), inM)),
-      el("div", { class: "ctl-field" }, el("span", {}, "Hops"), el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH)),
-      el("div", { class: "ctl-field" }, el("span", {}, "Sensor"), el("div", { class: "seg" }, sensors.map((x) => x[1]))),
-      sliders, help, el("div", { class: "ctl-actions" }, startBtn, status));
+    const speeds = SPEEDS.map((sp) => [sp.v, el("button", { class: "btn", onclick: () => { S.speed = sp.v; refresh(); },
+      title: sp.v ? `${sp.v} hops per second` : "As fast as the tracker runs" }, sp.label)]);
+    const prefToggle = (label, key) => {
+      const inp = el("input", { type: "checkbox" });
+      inp.addEventListener("change", () => OTS.setPref(key, inp.checked));
+      return { node: el("label", { class: "switch" }, inp, label), inp, key };
+    };
+    const toggles = [prefToggle("Reveal sensor mistakes (ghosts, missed hops)", "truth"), prefToggle("Show the true path", "path")];
+    const sec = (label, ...kids) => el("div", { class: "ctl-psec" }, el("div", { class: "ctl-group-l" }, label), kids);
+    panel.append(
+      el("div", { class: "ctl-panel-h" }, el("h2", {}, "Settings"),
+        el("button", { class: "btn", onclick: onClose, title: "Pop the panel out of the page (S)" }, "⇥ Pop in")),
+      sec("Channels", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chM.map((x) => x[1])), inM))),
+      sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
+      sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
+      sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
+      sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
+      sec("Show on the chart", toggles.map((x) => x.node),
+        el("div", { class: "ctl-help" }, "The system never sees these: they are drawn for you.")));
     let helpKey = "", btnKey = "";
     return function update() {
+      toggleSel(speeds, (v) => v === S.speed);
+      for (const x of toggles) x.inp.checked = !!OTS.prefs[x.key];
       toggleSel(chM, (v) => v === S.cfg.M); toggleSel(chH, (v) => v === S.cfg.hops); toggleSel(sensors, (v) => v === S.cfg.sensor);
       if (document.activeElement !== inM) inM.value = S.cfg.M;
       if (document.activeElement !== inH) inH.value = S.cfg.hops;
@@ -3255,9 +3303,9 @@ window.OTS = (function () {
     };
   }
 
-  function makeTx(card) {
+  function makeTx(card, openPanel) {
     const buttons = new Map();
-    card.append(el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "2 · Transmitter"),
+    card.append(el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Transmitter"),
       el("p", { class: "card-d" }, "Press an algorithm to put the radio on air. It keeps hopping with it until you press another one, which switches it mid-test with a fresh secret."))));
     for (const grp of GROUPS) {
       card.append(el("div", { class: "ctl-group" }, el("div", { class: "ctl-group-l" }, grp.label),
@@ -3271,12 +3319,10 @@ window.OTS = (function () {
     }
     const playBtn = el("button", { class: "btn primary", onclick: () => (S.playing ? (pause(), refresh()) : play()) });
     const stepBtn = el("button", { class: "btn", onclick: stepOnce, title: "Advance one hop (→)" }, "›› 1 hop");
-    const speeds = SPEEDS.map((sp) => [sp.v, el("button", { class: "btn", onclick: () => { S.speed = sp.v; refresh(); },
-      title: sp.v ? `${sp.v} hops per second` : "As fast as the tracker runs" }, sp.label)]);
+    const chip = el("button", { class: "chip ctl-chip", onclick: openPanel, title: "Open the settings panel (S)" });
     const clockN = el("b", { class: "num" }), clockT = document.createTextNode("");
     const msg = el("div", { class: "ctl-help", role: "status" });
-    card.append(el("div", { class: "ctl-transport" }, playBtn, stepBtn, el("span", { class: "small ink2" }, "Speed"),
-      el("div", { class: "seg" }, speeds.map((x) => x[1])), el("span", { class: "grow" }),
+    card.append(el("div", { class: "ctl-transport" }, playBtn, stepBtn, chip, el("span", { class: "grow" }),
       el("span", { class: "ctl-clock" }, "HOP ", clockN, clockT)), msg);
     return function update() {
       for (const [id, { b, small, e }] of buttons) {
@@ -3290,7 +3336,8 @@ window.OTS = (function () {
       playBtn.textContent = S.playing ? "❚❚ Pause" : "▶ Run";
       playBtn.disabled = !S.algo || done() || !OTS.live;
       stepBtn.disabled = !S.algo || done() || !OTS.live;
-      toggleSel(speeds, (v) => v === S.speed);
+      const s = sensorOf(S.cfg), sp = SPEEDS.find((x) => x.v === S.speed);
+      chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
       clockN.textContent = String(S.recs.length).padStart(3, "0");
       clockT.textContent = "/" + (S.sess && !cfgChanged() ? S.sess.hops : S.cfg.hops);
       msg.classList.toggle("ctl-no", !!S.error);
@@ -3327,19 +3374,12 @@ window.OTS = (function () {
     mount(root) {
       injectCss();
       const note = el("div");
-      const setup = el("div", { class: "card" }), tx = el("div", { class: "card" });
+      const panel = el("aside", { class: "ctl-panel", "aria-label": "Control room settings" }), tx = el("div", { class: "card" });
       const acc = el("div", { class: "card ctl-acc", "aria-label": "Next-hop prediction accuracy" });
       const hopLegendBox = el("div", { style: "min-height:26px" }), hopBox = el("div", { class: "ctl-hop" });
-      const prefToggle = (label, key) => {
-        const inp = el("input", { type: "checkbox" }); inp.checked = !!OTS.prefs[key];
-        inp.addEventListener("change", () => OTS.setPref(key, inp.checked));
-        return { node: el("label", { class: "switch" }, inp, label), inp, key };
-      };
-      const toggles = [prefToggle("Sensor mistakes", "truth"), prefToggle("True path", "path")];
       const hopCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
         el("p", { class: "card-t" }, "Hop chart"),
-        el("p", { class: "card-k" }, "Rings are the system's calls, made before each hop")),
-        el("div", { class: "row", style: "gap:2px 16px" }, toggles.map((x) => x.node))), hopLegendBox, hopBox,
+        el("p", { class: "card-k" }, "Rings are the system's calls, made before each hop"))), hopLegendBox, hopBox,
         el("div", { class: "card-foot" }, "Top band: what the system thinks (faded until it locks). Bottom band: what the transmitter really runs. The system never sees the truth overlays."));
       const tlBox = el("div", { class: "ctl-tl" });
       const tlCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
@@ -3352,21 +3392,37 @@ window.OTS = (function () {
       const tableBox = el("div");
       const tableCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
         el("p", { class: "card-t" }, "Per algorithm"), el("p", { class: "card-k" }, "How each algorithm you put on air was handled"))), tableBox);
-      root.append(el("div", { class: "page ctl-page" }, note, el("div", { class: "ctl-top" }, setup, tx), acc,
-        el("div", { class: "ctl-cols" }, el("div", { class: "ctl-col" }, hopCard, tlCard), el("div", { class: "ctl-col" }, sys, logCard)),
-        tableCard));
+      // The panel sits beside the page, outside its CSS container: a query container
+      // is the containing block of position:fixed children, which the narrow-screen
+      // drawer and the pop-out tab need to escape.
+      const tab = el("button", { class: "ctl-tab", onclick: () => setOpen(true), title: "Open settings (S)" }, "⚙ Settings");
+      const backdrop = el("div", { class: "ctl-backdrop", onclick: () => setOpen(false) });
+      const shell = el("div", { class: "ctl-shell" },
+        el("div", { class: "page ctl-page" }, note, tx, acc,
+          el("div", { class: "ctl-cols" }, el("div", { class: "ctl-col" }, hopCard, tlCard), el("div", { class: "ctl-col" }, sys, logCard)),
+          tableCard),
+        panel, backdrop, tab);
+      root.append(shell);
+      function setOpen(open) {
+        panelOpen = open;
+        try { localStorage.setItem(PANEL_KEY, open ? "1" : "0"); } catch (_) { /* storage unavailable */ }
+        shell.classList.toggle("closed", !open);
+        tab.hidden = open;
+        renderCharts();
+      }
 
       let lastSwitch = 0;
       function renderCharts() {
         hopLegend(hopLegendBox, renderHop(hopBox) || {});
         renderTimeline(tlBox);
       }
-      const updateSetup = makeSetup(setup), updateTx = makeTx(tx);
+      const updatePanel = makePanel(panel, () => setOpen(false)), updateTx = makeTx(tx, () => setOpen(true));
+      setOpen(panelOpen);
       ui = {
         render() {
           note.hidden = OTS.live;
           if (!OTS.live && !note.firstChild) note.append(offline());
-          updateSetup(); updateTx(); renderAcc(acc); renderCharts();
+          updatePanel(); updateTx(); renderAcc(acc); renderCharts();
           renderSystem(sys); renderLog(logBox); renderTable(tableBox);
           const sw = S.recs.filter((r) => r.switch_detected).length;
           if (sw > lastSwitch) { sys.classList.remove("ctl-flash"); void sys.offsetWidth; sys.classList.add("ctl-flash"); }
@@ -3379,14 +3435,13 @@ window.OTS = (function () {
         if (e.key === " ") { e.preventDefault(); if (S.playing) { pause(); refresh(); } else play(); }
         else if (e.key === "ArrowRight") stepOnce();
         else if (e.key.toLowerCase() === "t") OTS.setPref("truth", !OTS.prefs.truth);
+        else if (e.key.toLowerCase() === "s") setOpen(!panelOpen);
+        else if (e.key === "Escape" && panelOpen && window.innerWidth <= 1100) setOpen(false);
       };
       document.addEventListener("keydown", onKey);
       const ro = new ResizeObserver(() => renderCharts());
       ro.observe(hopBox); ro.observe(tlBox);
-      const subs = [OTS.on("live", refresh), OTS.on("prefs", () => {
-        for (const x of toggles) x.inp.checked = !!OTS.prefs[x.key];
-        renderCharts();
-      })];
+      const subs = [OTS.on("live", refresh), OTS.on("prefs", () => { updatePanel(); renderCharts(); })];
       ui.render();
       return () => {
         pause(); ui = null;

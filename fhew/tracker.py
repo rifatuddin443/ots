@@ -91,11 +91,20 @@ def tracker_bank_specs(n_channels: int) -> list[HypothesisSpec]:
 
 
 def universal_specs(max_order: int = 4) -> list[HypothesisSpec]:
-    """The zero-shot experts that predict generators the bank has no expert for."""
+    """The zero-shot experts that predict generators the bank has no expert for.
+
+    Context mixing (any in-context regularity), the phase-space predictor
+    (unseen low-dimensional dynamics) and the modular linear-recurrence learner
+    (affine order-<=2 rules, which it pins down in a few hops where context
+    mixing must first see every context). None of them names a generator, so
+    identification is unchanged; they make the next-hop prediction re-converge
+    faster after a switch.
+    """
     return [
         HypothesisSpec("context_mixing", "markov", "context_mixing",
                        options={"max_order": max_order}),
         HypothesisSpec("phase_space", "logistic", "phase_space"),
+        HypothesisSpec("recurrence", "lagged_fib", "recurrence"),
     ]
 
 
@@ -249,13 +258,19 @@ class SwitchTracker:
     min_takeover:
         Only segments born at least this many slots after the current start count
         as evidence of a new switch (younger ones of the same regime refine it).
+    merge:
+        A takeover within this many slots of the last declared switch re-dates
+        that switch instead of declaring a new one: just after a switch a
+        slightly younger segment, whose online learners started cleaner, often
+        overtakes the first one to win.
     """
 
     def __init__(self, channels: ChannelSet, sensor: SensorModel, *, horizon: int | None = None,
                  library: ExpertLibrary | None = None, specs: list[HypothesisSpec] | None = None,
                  hazard: float = 1 / 150, max_segments: int = 6, protect: int | None = None,
                  eta: float = 1.0, alpha: float = 1e-4, lock_level: float = 0.95,
-                 unlock_level: float = 0.8, confirm: int = 2, switch_level: float = 0.9, min_takeover: int = 4, universal_order: int = 4):
+                 unlock_level: float = 0.8, confirm: int = 2, switch_level: float = 0.9, min_takeover: int = 4, merge: int = 20,
+                 universal_order: int = 4):
         if not 0.0 < hazard < 1.0:
             raise ValueError("hazard must be in (0, 1)")
         if library is None:
@@ -279,6 +294,7 @@ class SwitchTracker:
         self.confirm = max(1, int(confirm))
         self.switch_level = float(switch_level)
         self.min_takeover = int(min_takeover)
+        self.merge = int(merge)
         self.emission = SensorAwareEmission(sensor)
         # Same assembly as fhew.config.build_bank, around the library's pristine experts.
         bank = HypothesisBank(channels, H0Hypothesis(channels, mode="uniform", floor="uniform"),
@@ -355,8 +371,11 @@ class SwitchTracker:
         if p_switch >= self.switch_level:
             k = max(later, key=lambda i: w[i])
             self._start = self.segments[k].birth
-            self.switches.append((self.t - 1, self._start))
             self._lock, self._streak = None, ("", 0)
+            if self.switches and self.t - 1 - self.switches[-1][0] <= self.merge:
+                self.switches[-1] = (self.switches[-1][0], self._start)   # re-date it
+                return False, p_switch
+            self.switches.append((self.t - 1, self._start))
             return True, p_switch
         k = int(np.argmax(w))
         if w[k] >= 0.5 and abs(self.segments[k].birth - self._start) < self.min_takeover:

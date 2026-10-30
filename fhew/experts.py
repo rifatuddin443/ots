@@ -530,6 +530,82 @@ class BehaviourHypothesis(_PredictorHypothesis):
         return row / row.sum()
 
 
+class RecurrenceHypothesis(Hypothesis):
+    """Zero-shot learner of modular linear recurrences (a universal predictor).
+
+    Tests every rule ``c_t = a1 c_{t-1} + a2 c_{t-2} + b (mod M)`` at once, with
+    no knowledge of any particular generator: it covers additive lagged
+    generators, full-state LCGs and any other affine order-<=2 recurrence over
+    the channel set. Each rule carries its own belief of the last two channels:
+    a clean (single-detection) slot re-syncs it, any other slot advances it on
+    the rule's own prediction, so missed hops are bridged and a ghost corrupts
+    at most a couple of slots before the next clean ones heal it. Rules are
+    scored through the sensor-aware emission like the enumeration experts. The
+    context-mixing learner must have seen a context before it can predict; this
+    one pins such a rule down in a handful of hops.
+
+    For ``M > 32`` the multipliers are restricted to small magnitudes
+    (``|a| <= 8``) to keep the candidate set tractable.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet):
+        self.label = label
+        self.channels = channels
+        self.M = M = channels.size
+        vals = np.arange(M) if M <= 32 else np.array(sorted(set(range(9)) | {M - k for k in range(1, 9)}))
+        a1, a2, b = np.meshgrid(vals, vals, np.arange(M), indexing="ij")
+        self._a1, self._a2, self._b = a1.ravel(), a2.ravel(), b.ravel()
+        self.K = self._a1.size
+        self.reset()
+
+    def reset(self) -> None:
+        self._p1 = self._p2 = None          # each rule's belief of c_{t-1}, c_{t-2}
+        self._cur = None                    # each rule's prediction for the current slot
+        self._recent: list[int | None] = []
+        self.log_w = np.full(self.K, -np.log(self.K))
+        self._last_predict = self.channels.uniform()
+
+    def forget(self, retain: float = 0.0) -> None:
+        self.reset()
+
+    def _roll(self) -> np.ndarray:
+        return (self._a1 * self._p1 + self._a2 * self._p2 + self._b) % self.M
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        if self._p1 is None:
+            self._cur = None
+            loglik = float(logsumexp(log_emission) - np.log(self.M))
+            return StepResult(loglik=loglik, predict_next=self.channels.uniform())
+        self._cur = self._roll()
+        a = self.log_w + log_emission[self._cur]
+        loglik = float(logsumexp(a))
+        self.log_w = a - loglik
+        return StepResult(loglik=loglik, predict_next=self._last_predict)
+
+    def observe_clean(self, channel: int | None) -> None:
+        if self._p1 is None:
+            # start once two consecutive clean channels give every rule its state
+            self._recent = (self._recent + [channel])[-2:]
+            if len(self._recent) == 2 and None not in self._recent:
+                self._p2 = np.full(self.K, self._recent[0], dtype=np.int64)
+                self._p1 = np.full(self.K, self._recent[1], dtype=np.int64)
+        else:
+            new = np.full(self.K, channel, dtype=np.int64) if channel is not None else self._cur
+            self._p2, self._p1 = self._p1, new
+        if self._p1 is None:
+            self._last_predict = self.channels.uniform()
+        else:
+            dist = np.bincount(self._roll(), weights=np.exp(self.log_w), minlength=self.M) + 1e-9
+            self._last_predict = dist / dist.sum()
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return self.K
+
+
 class MixtureHMMHypothesis(Hypothesis):
     """A posterior over candidate channel-transition models (used by chaos ID).
 
@@ -828,10 +904,15 @@ class LCGCryptanalysisHypothesis(Hypothesis):
             self._last_known_state = int(channel)
             run = _longest_clean_run(self._clean)
             if run is not None and len(run[1]) >= self.min_run:
-                res = recover_lcg_full(run[1], self.M)
-                if res is not None:
-                    self._a, self._c = res
-                    self._recovered = True
+                # Drop leading outputs that do not fit: a run that starts just
+                # before the generator came on air (another emitter's last hop)
+                # must not block recovery for good.
+                for k in range(len(run[1]) - self.min_run + 1):
+                    res = recover_lcg_full(run[1][k:], self.M)
+                    if res is not None:
+                        self._a, self._c = res
+                        self._recovered = True
+                        break
         elif self._last_known_slot is not None:
             # Already recovered: only re-anchor when the clean channel agrees with
             # the recurrence. A lone false-alarm detection would otherwise corrupt
@@ -983,6 +1064,8 @@ def build_hypothesis(spec: HypothesisSpec, channels: ChannelSet, horizon: int,
         return PhaseSpacePredictorHypothesis(spec.label, channels,
                                              dim=spec.options.get("dim", 3),
                                              k=spec.options.get("k", 8))
+    if spec.kind == "recurrence":
+        return RecurrenceHypothesis(spec.label, channels)
     if spec.kind == "behaviour":
         return BehaviourHypothesis(spec.label, channels,
                                    decay=spec.options.get("decay", 0.9))

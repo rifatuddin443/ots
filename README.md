@@ -113,7 +113,7 @@ runs recorded by `python -m dashboard.build`:
 | --- | --- |
 | **Story** | the problem in three steps and the headline results |
 | **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
-| **Control room** | *you* drive the transmitter (live server only): choose the number of channels, the number of hops and the sensor (including a perfect, 100%-accurate one), press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop |
+| **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. Channels, hops, sensor (including a perfect, 100%-accurate one), speed and chart overlays live in a settings side panel you can pop in and out |
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
@@ -134,7 +134,7 @@ settings drawer of the Live and Analysis pages. Press **G** for the guided demo
 CSPRNG control where the bank answers "unknown" and the standard test names a
 generator anyway). Keys: `1`–`8` pages, `Space` play, `←`/`→` step, `R` restart,
 `N` next run, `T` sensor mistakes, `S` settings, `F` full screen. In the Control
-room: `Space` run/pause, `→` one hop, `T` sensor mistakes.
+room: `Space` run/pause, `→` one hop, `S` settings panel, `T` sensor mistakes.
 
 The dashboard replays the exact episodes `experiments.common.episode_for` draws
 for each seed (checked in the tests), runs the one-expert-per-family
@@ -281,11 +281,14 @@ The bank's deterministic experts are anchored in time (candidate `j` predicts
 switch to a freshly keyed counter-based PRNG no candidate matches, and flushing on
 an alarm cannot fix it because the alarm lands a few hops late. `fhew.tracker.SwitchTracker`
 runs Bayesian online change-point detection whose run-length hypotheses each carry
-an **anchored segment** — a fresh identification bank plus the universal predictors,
-started at the hop that segment assumes the current generator began:
+an **anchored segment** — a fresh identification bank plus the universal predictors
+(context mixing, phase space, and a modular linear-recurrence learner that pins down
+rules like `c_t = c_{t-1} + c_{t-2} mod M` in a few hops), started at the hop that
+segment assumes the current generator began:
 
 - **switch detector** — a switch is declared once >= 90 % of the posterior sits on
-  segments younger than the current regime; the most probable one dates it;
+  segments younger than the current regime; the most probable one dates it (a
+  takeover within 20 hops of a detection re-dates it rather than counting twice);
 - **identifier** — the family posterior *marginalised over segments* (so a newborn
   segment that fits a few noisy hops by luck cannot lock on its own), locked at 95 %
   on two consecutive hops, released below 80 %;
@@ -316,27 +319,39 @@ python -m dashboard.control --channels 16 --hops 300 --sensor perfect \
 
 ### Findings (`exp18`, 6 random switch plans x 400 hops per sensor over all 13 algorithms, `M=16`)
 
-| Sensor | Switches detected | Delay (median / 90th pct) | Dated within ±1 hop | False alarms / 100 hops | Named exactly by regime end (+ closest family) | Correct lock (median hops) | Dangerous locks |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Perfect (`P_d=1, P_fa=0`) | 93 % | 1 / 5 hops | 96 % | 0.04 | 81 % (+19 %) | 72 % of regimes (6) | 0 % |
-| Strong (0.95, 0.01) | 90 % | 2 / 5 | 96 % | 0.08 | 72 % (+28 %) | 72 % (7) | 0 % |
-| Typical (0.8, 0.02) | 90 % | 4 / 10 | 81 % | 0.17 | 75 % (+25 %) | 64 % (9) | 0 % |
-| Contested (0.6, 0.05) | 90 % | 10 / 22 | 59 % | 0.08 | 75 % (+17 %) | 58 % (20) | 3 % (1 of 36) |
+| Sensor | Switches detected | Delay (median / 90th pct) | False alarms / 100 hops | Named exactly by regime end (+ closest family) | Dangerous locks |
+| --- | --- | --- | --- | --- | --- |
+| Perfect (`P_d=1, P_fa=0`) | 100 % | 0 / 6 hops | 0.04 | 81 % (+19 %) | 0 % |
+| Strong (0.95, 0.01) | 97 % | 1 / 6 | 0.04 | 72 % (+28 %) | 0 % |
+| Typical (0.8, 0.02) | 93 % | 4 / 12 | 0.25 | 78 % (+22 %) | 0 % |
+| Contested (0.6, 0.05) | 90 % | 11 / 24 | 0.13 | 75 % (+17 %) | 3 % (1 of 36) |
 
-- **Every switch *into* an algorithm the bank has an expert for was detected**, on every
-  sensor. All missed switches are between two sources with no exact structure for the
-  bank (Markov → CSPRNG, CSPRNG → lagged generator), where the old segment's online
-  learners simply adapt and the prediction carries on.
-- "Closest family" is the graceful answer for the new algorithms (e.g. the
-  quadratic PRNG described as a Markov hopper, the sine map as a chaotic map) and
-  for the CSPRNG; it is never an algebraic claim.
+Next-hop top-1 accuracy by hops since the switch (random guessing: 6 %); in brackets,
+the same plans without the recurrence learner and the LCG-anchoring fix:
+
+| Sensor | hops 1–5 | 6–10 | 11–20 | 21–40 |
+| --- | --- | --- | --- | --- |
+| Perfect | 31 % (30) | **79 % (66)** | **76 % (64)** | 77 % (73) |
+| Strong | 21 % (19) | **71 % (59)** | **74 % (60)** | **75 % (64)** |
+| Typical | 9 % (11) | 55 % (51) | **68 % (58)** | **72 % (60)** |
+| Contested | 5 % (4) | 21 % (21) | 45 % (44) | 56 % (52) |
+
+- From hop 6 on, the tracker matches an oracle restarted at the exact switch hop;
+  hops 1–5 are the evidence any detector needs to notice the switch. What remains
+  is each algorithm's own learning time — a Markov hopper's sparse transitions
+  cannot be predicted before they are seen, and the quantised chaotic maps cap
+  near 60 %.
+- **Every switch *into* an algorithm the bank has an expert for was detected**, on
+  every sensor; the misses are between two sources with no exact structure for
+  the bank (e.g. Markov → CSPRNG), where the old segment's learners just adapt.
+- "Closest family" is the graceful answer for the new algorithms and the CSPRNG
+  (e.g. the quadratic PRNG described as a Markov hopper); never an algebraic claim.
 - The one dangerous lock (contested sensor) is an LFSR candidate fitting a stretch
   of a Markov hopper's noisy hops, mostly through ghost detections — the bank's own
-  residual false-ID rate under that sensor (exp13: hard false-ID <= 0.05), slightly
-  amplified because a segment may start where the luck is best. Requiring the lock
-  on two consecutive hops removed the perfect-sensor case (a candidate matching the
-  first four hops after a switch to a CSPRNG exactly, by chance).
-- Cost: 40–85 ms per hop at `M=16` (more segments are protected under a worse sensor).
+  residual false-ID rate under that sensor (exp13: hard false-ID <= 0.05). Locks need
+  two consecutive hops at 95 %, which removed a perfect-sensor case (a candidate
+  matching the first four hops after a switch to a CSPRNG exactly, by chance).
+- Cost: 40–90 ms per hop at `M=16` (more segments are protected under a worse sensor).
 
 ---
 
@@ -379,7 +394,7 @@ dashboard/           demo dashboard: recorder, proofs, build, live server, pages
                      control.py (the Control room session + CLI)
 tests/test_fhew.py                67 tests incl. the information-parity audit
 tests/test_mixture_allocation.py  29 tests for the mixture / regime / allocator
-tests/test_tracker.py             12 tests for the switch tracker and control-room session
+tests/test_tracker.py             16 tests for the switch tracker, recurrence learner, control room
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -423,5 +438,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 122 tests, ~65s
+python -m pytest        # 126 tests, ~75s
 ```

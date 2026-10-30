@@ -129,3 +129,38 @@ def test_control_session_validates_settings(kw):
     from dashboard.control import ControlSession
     with pytest.raises(ValueError):
         ControlSession(**kw)
+
+
+# ============================== the recurrence learner (faster re-learning)
+def _recurrence_hits(gen_name, sensor, seed, n=40, M=16):
+    from fhew.experts import RecurrenceHypothesis
+    from fhew.likelihood import SensorAwareEmission
+    ch = ChannelSet.of_size(M)
+    rng = np.random.default_rng(seed)
+    seq = make_generator(gen_name, M, rng=rng).sequence(n)
+    h, em, hits = RecurrenceHypothesis("recurrence", ch), SensorAwareEmission(sensor), []
+    for t, o in enumerate(sensor.observe(seq, ch, rng)):
+        if t:
+            hits.append(int(np.argmax(h.predict_next())) == seq[t])
+        h.step(em.log_emission(o))
+        h.observe_clean(o.detections[0].channel if len(o.detections) == 1 else None)
+    return hits
+
+
+@pytest.mark.parametrize("M", [12, 16])
+def test_recurrence_learner_pins_down_a_lagged_generator_in_a_few_hops(M):
+    assert all(_recurrence_hits("lagged_fib", SensorModel(1.0, 0.0), seed=1, M=M)[5:])
+
+
+def test_recurrence_learner_survives_a_noisy_sensor_and_invents_nothing():
+    noisy = [np.mean(_recurrence_hits("lagged_fib", SensorModel(0.8, 0.02), seed=s)[20:]) for s in range(4)]
+    assert np.mean(noisy) >= 0.7
+    rand = [np.mean(_recurrence_hits("csprng", SensorModel(1.0, 0.0), seed=s)) for s in range(4)]
+    assert np.mean(rand) <= 0.2                                         # chance is 1/16
+
+
+def test_tracker_predicts_a_new_lagged_generator_soon_after_the_switch(library):
+    sensor = SensorModel(1.0, 0.0)
+    tr = SwitchTracker(ChannelSet.of_size(M), sensor, library=library)
+    _, _, hits = _drive(tr, [("weak_seed", 0), ("lagged_fib", 40)], 80, sensor, seed=7)
+    assert all(hits[39 + 8:])                                           # every hop from 8 after the switch

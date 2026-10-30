@@ -11,6 +11,48 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-10-30 (later) — Control-room settings panel; faster re-learning after a switch
+
+### Settings in a side panel
+The Control room's setup (channels, hops, sensor incl. *Perfect*, new session),
+playback speed and chart overlays moved out of the page into a **settings panel
+docked on the right**. "⇥ Pop in" hides it; the edge tab, the settings chip in the
+transmitter card or `S` brings it back; the choice is remembered. Below 1100 px it
+slides over the page as a drawer (`Esc` closes). The panel sits outside the page's
+CSS query container, because a query container is the containing block of
+`position: fixed` children, which the drawer and the tab need to escape.
+
+### Accuracy after a switch
+Measured first against an oracle restarted at the exact switch hop: with a perfect
+sensor the tracker already matched it from hop 6, so the dip was the experts'
+re-learning time, not switch handling (a higher switch prior did not help either).
+Changes:
+- `fhew/experts.py::RecurrenceHypothesis` — a zero-shot learner of modular linear
+  recurrences `c_t = a1 c_{t-1} + a2 c_{t-2} + b (mod M)` (all rules at once; each
+  re-syncs to clean detections and rolls its own prediction across missed hops;
+  sensor-aware scoring; `|a| <= 8` above 32 channels). Added to the tracker's
+  universal experts (`fhew/tracker.py::universal_specs`); it names no generator,
+  so identification is unchanged. Lagged generator, perfect sensor: hops 6–10
+  after a switch 5 % -> 90 %; full-state LCG under the typical sensor 0 % -> 100 %.
+- `LCGCryptanalysisHypothesis` now drops leading outputs that do not fit before
+  recovering `(a, c)`: a segment starting one hop before the LCG came on air no
+  longer blocks recovery for good (it had cost exact identification once the
+  recurrence learner made such segments competitive).
+- `SwitchTracker(merge=20)`: a takeover within 20 hops of a detected switch
+  re-dates it instead of counting a second switch.
+- `exp18` now scores next-hop accuracy by hops since each switch (panel C).
+
+Next-hop top-1 by hops since a switch (before -> after, same plans): perfect
+6–10: 66 -> 79 %, 11–20: 64 -> 76 %; strong 11–20: 60 -> 74 %; typical 11–20:
+58 -> 68 %, 21–40: 60 -> 72 %; contested about unchanged. Switches detected: perfect
+93 -> 100 %, strong 90 -> 97 %, typical 90 -> 93 %. Dangerous locks unchanged (0 %,
+contested 1 of 36). Typical-sensor false alarms 4 -> 6 per 2,400 hops.
+
+Tests: 4 added (recurrence learner exact / noisy / no invented pattern; tracker
+predicts a new lagged generator within 8 hops of the switch); 126 pass.
+
+---
+
 ## 2026-10-30 — Control room: drive the transmitter yourself, switch algorithms mid-test
 
 A new dashboard page where the operator chooses the hop algorithm the radio runs

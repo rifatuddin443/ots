@@ -15,8 +15,11 @@ for, or wrong), whether a correct lock was reached and how many hops it took, an
 any *dangerous* lock -- an algebraic family that is not the truth -- made after
 the switch was detected. False alarms are switches declared inside a regime.
 
+It also scores the next-hop call against hops since each switch, the number that
+shows how fast the prediction re-converges on the new algorithm.
+
 Panel A: detection rate and delay per sensor. Panel B: final identification and
-locks per sensor.
+locks per sensor. Panel C: next-hop accuracy against hops since the switch.
 """
 
 from __future__ import annotations
@@ -63,19 +66,24 @@ def run_plan(library: ExpertLibrary, sensor: SensorModel, seed: int, window: int
     rng = np.random.default_rng(seed)
     plan = switch_plan(rng, window)
     tracker = SwitchTracker(ch, sensor, library=library)
-    starts, gen, steps = dict(plan), None, []
+    starts, gen, steps, hits = dict(plan), None, [], []
     t0 = time.time()
     for t in range(window):
         if t in starts:
             algo = starts[t]
             gen = make_generator(algo, ch.size, rng=rng, **C.draw_episode_params(algo, rng))
-        obs = sensor.observe([gen.next_channel()], ch, rng, start_slot=t)[0]
-        steps.append(tracker.observe(obs))
-    return plan, tracker.switches, steps, (time.time() - t0) / window
+        c = gen.next_channel()
+        hits.append(t > 0 and tracker.predict_top1() == c)     # the call made before hop t
+        steps.append(tracker.observe(sensor.observe([c], ch, rng, start_slot=t)[0]))
+    return plan, tracker.switches, steps, hits, (time.time() - t0) / window
 
 
-def score(plan, switches, steps, window: int = WINDOW) -> list[dict]:
-    """One row per regime of a run."""
+#: hops since a switch over which the next-hop accuracy is reported
+ACC_BINS = ((1, 5), (6, 10), (11, 20), (21, 40))
+
+
+def score(plan, switches, steps, hits=None, window: int = WINDOW) -> list[dict]:
+    """One row per regime of a run (``hits[t]``: was the call for hop ``t`` right)."""
     rows = []
     for i, (s, algo) in enumerate(plan):
         e = plan[i + 1][0] if i + 1 < len(plan) else window
@@ -94,8 +102,13 @@ def score(plan, switches, steps, window: int = WINDOW) -> list[dict]:
                 lock = t - s + 1
         end = steps[e - 1].ident
         lab = "unknown" if end.label == "H0" else end.label
+        acc = {}
+        if hits is not None and i > 0:
+            for lo, hi in ACC_BINS:
+                xs = [bool(hits[s + k - 1]) for k in range(lo, hi + 1) if s + k - 1 < e]
+                acc[f"{lo}-{hi}"] = xs
         rows.append({
-            "algo": algo, "is_switch": i > 0, "detected": first is not None,
+            "algo": algo, "is_switch": i > 0, "acc_since_switch": acc, "detected": first is not None,
             "delay": first[0] - s if first else None,
             "start_error": first[1] - s if first else None,
             "false_alarms": len(dets) - (1 if first else 0),
@@ -112,8 +125,13 @@ def summarise(rows: list[dict], hops: int, ms: float) -> dict:
     delays = [r["delay"] for r in det]
     locks = [r["lock_hops"] for r in rows if r["lock_hops"] is not None]
     n = len(rows)
+    acc = {}
+    for lo, hi in ACC_BINS:
+        xs = [x for r in sw for x in r["acc_since_switch"].get(f"{lo}-{hi}", [])]
+        acc[f"{lo}-{hi}"] = round(float(np.mean(xs)), 3) if xs else None
     return {
         "n_switches": len(sw), "n_regimes": n, "ms_per_hop": round(ms, 1),
+        "top1_since_switch": acc,
         "detect_rate": round(len(det) / max(1, len(sw)), 3),
         "delay_median": float(np.median(delays)) if delays else None,
         "delay_p90": float(np.percentile(delays, 90)) if delays else None,
@@ -137,8 +155,8 @@ def compute(*, n_seeds=6, **_) -> dict:
         sensor = SensorModel(p_d, p_fa)
         rows, ms = [], []
         for seed in C.seeds(n, base=1800):
-            plan, switches, steps, t = run_plan(library, sensor, seed)
-            rows += score(plan, switches, steps)
+            plan, switches, steps, hits, t = run_plan(library, sensor, seed)
+            rows += score(plan, switches, steps, hits)
             ms.append(t * 1000)
         out[name] = {"p_d": p_d, "p_fa": p_fa, **summarise(rows, n * WINDOW, float(np.mean(ms))),
                      "rows": rows}
@@ -153,7 +171,7 @@ def plot(results: dict, path: str | Path) -> Path:
     names = list(S)
     x = np.arange(len(names))
     ticks = [f"{k}\n$P_d$={S[k]['p_d']:g}, $P_{{fa}}$={S[k]['p_fa']:g}" for k in names]
-    fig, (axA, axB) = plt.subplots(1, 2, figsize=(13.5, 5.2), gridspec_kw={"wspace": 0.42})
+    fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(19.5, 5.2), gridspec_kw={"wspace": 0.42})
     # A: detection rate (bars) + delay median / p90 (points on a twin axis)
     axA.bar(x, [S[k]["detect_rate"] for k in names], color=style.PALETTE["sky"], width=0.55,
             label="switches detected (left axis)")
@@ -189,6 +207,20 @@ def plot(results: dict, path: str | Path) -> Path:
     axB.set_ylabel("share of regimes")
     axB.legend(fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=3)
     axB.set_title("B. Naming the new algorithm by the end of its regime", loc="left")
+    # C: next-hop accuracy against hops since the switch
+    if all("top1_since_switch" in S[k] for k in names):
+        labels = [f"{lo}-{hi}" for lo, hi in ACC_BINS]
+        colors = [style.PALETTE[c] for c in ("blue", "green", "orange", "vermillion")]
+        for k, color in zip(names, colors):
+            axC.plot(range(len(labels)), [S[k]["top1_since_switch"][b] for b in labels], "o-", color=color, label=k)
+        axC.axhline(1 / results["meta"]["M"], color=style.PALETTE["grey"], ls="--", lw=1)
+        axC.text(len(labels) - 1, 1 / results["meta"]["M"] + 0.02, "random", ha="right", fontsize=8, color=style.PALETTE["grey"])
+        axC.set_xticks(range(len(labels)), labels)
+        axC.set_xlabel("hops since the switch")
+        axC.set_ylabel("next-hop top-1 accuracy")
+        axC.set_ylim(0, 1)
+        axC.legend(fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=4)
+        axC.set_title("C. Re-converging after the switch", loc="left")
     fig.suptitle(f"Switch tracking over random switch plans ({results['meta']['n_plans']} plans x "
                  f"{results['meta']['window']} hops per sensor, M={results['meta']['M']})", fontsize=11)
     return style.save(fig, path)
@@ -210,7 +242,8 @@ def main(argv=None):
         print(f"  {k:9s} detect {v['detect_rate']:.0%} (median {v['delay_median']} hops, "
               f"p90 {v['delay_p90']}), dated +-1 {v['dated_within_1']}, false alarms/100 hops "
               f"{v['false_alarms_per_100_hops']}, final exact {v['final_exact']:.0%} + soft "
-              f"{v['final_soft']:.0%}, dangerous locks {v['dangerous_locks_per_regime']:.0%}")
+              f"{v['final_soft']:.0%}, dangerous locks {v['dangerous_locks_per_regime']:.0%}, "
+              f"top-1 since switch {v['top1_since_switch']}")
 
 
 if __name__ == "__main__":
