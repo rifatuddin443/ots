@@ -19,3 +19,4 @@ data/*.json
 .venv/
 venv/
 .DS_Store
+ots_website.zip
