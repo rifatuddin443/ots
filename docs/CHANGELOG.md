@@ -11,6 +11,63 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-10-30 — Control room: drive the transmitter yourself, switch algorithms mid-test
+
+A new dashboard page where the operator chooses the hop algorithm the radio runs
+— and switches it whenever they like — while the system, seeing only the sensor
+output, has to notice the switch, name the new algorithm and keep predicting the
+next hop. Channels, hops and the sensor (including a **perfect, 100%-accurate**
+one) are chosen per session.
+
+### Why a new tracker was needed
+The identification bank's deterministic experts are anchored in time: candidate
+`j` predicts `traj[j, t]` counted from the start of the engagement. A freshly keyed
+weak-seed PRNG or truncated LCG switched in at hop 137 emits its own counter-0
+output there, which no candidate anchored at hop 0 produces — and flushing on an
+alarm (`forget`) cannot help because the alarm lands a few hops late, so the
+anchor is still off. The existing `ChannelPredictor` + regime monitor therefore
+re-pointed the *prediction* through its universal learner but could not
+*re-identify* such generators after a switch.
+
+### What was added
+| Where | What |
+| --- | --- |
+| `fhew/tracker.py` | `SwitchTracker`: Bayesian online change-point detection whose run-length hypotheses each carry an **anchored segment** (a fresh identification bank + the universal context-mixing / phase-space experts, started at the hop the segment assumes the generator began). The run-length posterior is the switch detector (a switch is declared when ≥ 90 % of the mass sits on segments younger than the current regime; the most probable dates it), the identifier (family posterior **marginalised over segments**, so a newborn segment that fits a few noisy hops by luck cannot produce a false lock), and the predictor (run-length-weighted mixture of segment forecasts). Lock at 95 % with hysteresis (released below 80 %). Segments share the experts' read-only trajectory tables via an `ExpertLibrary` (built once per channel count; a segment birth is a cheap copy). Newborn segments are protected for `ceil(9 / clean-hop rate)` hops (10–32), so the segment born at a switch survives until it can lock under a worse sensor. Register experts are dropped for a non-power-of-two channel count. |
+| `dashboard/control.py` | `ControlSession`: the transmitter you drive (re-keyed from the recce ranges on every switch), the sensor, the tracker, per-hop records (truth for the audience only), per-algorithm summary; library cache; CLI `python -m dashboard.control --channels 16 --hops 300 --sensor perfect --plan lfsr:0 weak_seed:80 markov:160`. |
+| `dashboard/serve.py` | `GET /api/control/new` (channels, hops, p_d, p_fa, seed) and `GET /api/control/step` (session, algo, n); warms the 16-channel library at start. |
+| `dashboard/views/control.js` | The **Control room** page: setup (channels 4–64, hops 20–1000, sensor Perfect / Strong / Typical / Contested / Custom), transmitter buttons grouped known / new / control (on-air indicator; register algorithms disabled off a power of two), run / pause / 1-hop / speed; hop chart with the system's belief band over the transmitter's truth band and switch / detection markers; the system's view (identification, lock, estimated start, recovered vs true secret, next-hop call, family race, switch posterior); whole-session timeline (truth vs belief + rolling hit rate); event log; per-algorithm table. Controls are built once and updated in place so a click is never lost to a re-render while running. Offline (standalone file) it explains how to start the live server. |
+| `experiments/exp18_switch_tracking.py` | Random switch plans over all 13 algorithms per sensor: detection rate / delay, dating, false alarms, identification by the end of each regime, dangerous locks. Wired into `scripts/run_all.py`. Figure: `docs/figures/exp18_switch_tracking.png`. |
+| `tests/test_tracker.py` | 12 tests: power-of-two bank specs, protection vs sensor, shared tables / private state, LFSR → weak-seed switch detected, dated exactly and re-identified, a noisy chaos → LCG switch, no false switch or algebraic claim on a CSPRNG, the control session end to end, channel-count and settings validation. |
+
+### Measured (`exp18`, 6 random switch plans x 400 hops per sensor, `M=16`, 36 regimes / 30 switches each)
+| Sensor | Switches detected | Delay (median / 90th pct) | Dated within ±1 hop | False alarms / 100 hops | Named exactly by regime end (+ closest family) | Correct lock (median hops) | Dangerous locks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Perfect (`P_d=1, P_fa=0`) | 93 % | 1 / 5 hops | 96 % | 0.04 | 81 % (+19 %) | 72 % of regimes (6) | 0 % |
+| Strong (0.95, 0.01) | 90 % | 2 / 5 | 96 % | 0.08 | 72 % (+28 %) | 72 % (7) | 0 % |
+| Typical (0.8, 0.02) | 90 % | 4 / 10 | 81 % | 0.17 | 75 % (+25 %) | 64 % (9) | 0 % |
+| Contested (0.6, 0.05) | 90 % | 10 / 22 | 59 % | 0.08 | 75 % (+17 %) | 58 % (20) | 3 % (1 of 36) |
+
+- **Every switch *into* an algorithm the bank has an expert for was detected**, on every
+  sensor. All missed switches are between two sources with no exact structure for the
+  bank (Markov → CSPRNG, CSPRNG → lagged generator), where the old segment's online
+  learners simply adapt and the prediction carries on.
+- "Closest family" is the graceful answer for the new algorithms (e.g. the
+  quadratic PRNG described as a Markov hopper, the sine map as a chaotic map) and
+  for the CSPRNG; it is never an algebraic claim.
+- The one dangerous lock (contested sensor) is an LFSR candidate fitting a stretch
+  of a Markov hopper's noisy hops, mostly through ghost detections — the bank's own
+  residual false-ID rate under that sensor (exp13: hard false-ID <= 0.05), slightly
+  amplified because a segment may start where the luck is best. Requiring the lock
+  on two consecutive hops removed the perfect-sensor case (a candidate matching the
+  first four hops after a switch to a CSPRNG exactly, by chance).
+- Cost: 40–85 ms per hop at `M=16` (more segments are protected under a worse sensor).
+
+Also: `index.html` registers the page after Live demo (shortcut hint now `1`–`8`);
+`ots_dashboard.html` rebuilt with `--reuse`; README updated (dashboard table,
+experiments table, a switch-tracker section, package layout, test count).
+
+---
+
 ## 2026-10-23 (later) — Live demo: playable regime switches + prediction-accuracy readout
 
 Made the adaptive behaviour playable in the **Live demo** page and surfaced a

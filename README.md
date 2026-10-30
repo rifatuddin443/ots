@@ -113,6 +113,7 @@ runs recorded by `python -m dashboard.build`:
 | --- | --- |
 | **Story** | the problem in three steps and the headline results |
 | **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
+| **Control room** | *you* drive the transmitter (live server only): choose the number of channels, the number of hops and the sensor (including a perfect, 100%-accurate one), press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop |
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
@@ -122,6 +123,7 @@ runs recorded by `python -m dashboard.build`:
 python -m dashboard.build      # record engagements, scoreboard and proofs -> dashboard/data.js (~2 min)
 # then open dashboard/index.html in a browser: replays offline, no server or external scripts
 python -m dashboard.serve      # http://127.0.0.1:8050 : same pages, plus new engagements run live
+                               #   and the Control room at http://127.0.0.1:8050/#/control
 python -m dashboard.build --reuse --standalone ots_demo.html   # one self-contained file to share
 ```
 
@@ -130,8 +132,9 @@ Scenario, sensor quality, recorded run, display toggles and speed live in the
 settings drawer of the Live and Analysis pages. Press **G** for the guided demo
 (LFSR, weak seed under a contested sensor, Hénon chaos, filtered LFSR, then the
 CSPRNG control where the bank answers "unknown" and the standard test names a
-generator anyway). Keys: `1`–`6` pages, `Space` play, `←`/`→` step, `R` restart,
-`N` next run, `T` sensor mistakes, `S` settings, `F` full screen.
+generator anyway). Keys: `1`–`8` pages, `Space` play, `←`/`→` step, `R` restart,
+`N` next run, `T` sensor mistakes, `S` settings, `F` full screen. In the Control
+room: `Space` run/pause, `→` one hop, `T` sensor mistakes.
 
 The dashboard replays the exact episodes `experiments.common.episode_for` draws
 for each seed (checked in the tests), runs the one-expert-per-family
@@ -161,6 +164,7 @@ the exp6/exp7 protocols with the same seeds.
 | `exp15_regime_switch` | thesis §4.2 / §6.4 | Recovery time after a mid-engagement generator switch: Fixed-Share + context flush vs weights-only vs bank-alone |
 | `exp16_allocation` | thesis §6.3 / §7 | Multi-tone power allocation: spot↔barrage knapsack vs water-filling, and reactive/follower jamming vs dwell |
 | `exp17_feasibility` | thesis §10 | Feasibility map with the reactive-jamming region (dwell vs reaction latency, and window vs hop rate) |
+| `exp18_switch_tracking` | thesis §6.4 | Random switch plans over all 13 algorithms, per sensor (incl. perfect): switch detection rate/delay, false alarms, identification after each switch, dangerous locks |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -270,6 +274,72 @@ for o in ep.observations:
 
 ---
 
+## Following a transmitter that switches algorithm (switch tracker)
+
+The bank's deterministic experts are anchored in time (candidate `j` predicts
+`traj[j, t]` counted from the start of the engagement), so after a mid-engagement
+switch to a freshly keyed counter-based PRNG no candidate matches, and flushing on
+an alarm cannot fix it because the alarm lands a few hops late. `fhew.tracker.SwitchTracker`
+runs Bayesian online change-point detection whose run-length hypotheses each carry
+an **anchored segment** — a fresh identification bank plus the universal predictors,
+started at the hop that segment assumes the current generator began:
+
+- **switch detector** — a switch is declared once >= 90 % of the posterior sits on
+  segments younger than the current regime; the most probable one dates it;
+- **identifier** — the family posterior *marginalised over segments* (so a newborn
+  segment that fits a few noisy hops by luck cannot lock on its own), locked at 95 %
+  on two consecutive hops, released below 80 %;
+- **predictor** — the run-length-weighted mixture of every segment's forecast.
+
+Segments share the experts' read-only trajectory tables (`ExpertLibrary`, built once
+per channel count), and the newest are protected from pruning for longer under a
+worse sensor so the segment born at a switch survives until it can lock. This is
+what the dashboard's **Control room** runs, hop by hop, while you switch algorithms.
+
+```python
+from fhew import ChannelSet, SensorModel
+from fhew.tracker import SwitchTracker
+
+tracker = SwitchTracker(ChannelSet.of_size(16), SensorModel(1.0, 0.0), horizon=400)  # perfect sensor
+for obs in stream:                       # observations only, as everywhere else
+    step = tracker.observe(obs)
+    step.ident.label, step.ident.p, step.ident.locked   # what it thinks the radio runs now
+    step.switch_detected, step.ident.start_slot         # a switch, and the hop it began
+    tracker.predict_top1()                              # the next channel
+```
+
+```bash
+# the same thing from the command line, with a scripted switch plan
+python -m dashboard.control --channels 16 --hops 300 --sensor perfect \
+    --plan lfsr:0 weak_seed:80 markov:160 lagged_fib:240
+```
+
+### Findings (`exp18`, 6 random switch plans x 400 hops per sensor over all 13 algorithms, `M=16`)
+
+| Sensor | Switches detected | Delay (median / 90th pct) | Dated within ±1 hop | False alarms / 100 hops | Named exactly by regime end (+ closest family) | Correct lock (median hops) | Dangerous locks |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Perfect (`P_d=1, P_fa=0`) | 93 % | 1 / 5 hops | 96 % | 0.04 | 81 % (+19 %) | 72 % of regimes (6) | 0 % |
+| Strong (0.95, 0.01) | 90 % | 2 / 5 | 96 % | 0.08 | 72 % (+28 %) | 72 % (7) | 0 % |
+| Typical (0.8, 0.02) | 90 % | 4 / 10 | 81 % | 0.17 | 75 % (+25 %) | 64 % (9) | 0 % |
+| Contested (0.6, 0.05) | 90 % | 10 / 22 | 59 % | 0.08 | 75 % (+17 %) | 58 % (20) | 3 % (1 of 36) |
+
+- **Every switch *into* an algorithm the bank has an expert for was detected**, on every
+  sensor. All missed switches are between two sources with no exact structure for the
+  bank (Markov → CSPRNG, CSPRNG → lagged generator), where the old segment's online
+  learners simply adapt and the prediction carries on.
+- "Closest family" is the graceful answer for the new algorithms (e.g. the
+  quadratic PRNG described as a Markov hopper, the sine map as a chaotic map) and
+  for the CSPRNG; it is never an algebraic claim.
+- The one dangerous lock (contested sensor) is an LFSR candidate fitting a stretch
+  of a Markov hopper's noisy hops, mostly through ghost detections — the bank's own
+  residual false-ID rate under that sensor (exp13: hard false-ID <= 0.05), slightly
+  amplified because a segment may start where the luck is best. Requiring the lock
+  on two consecutive hops removed the perfect-sensor case (a candidate matching the
+  first four hops after a switch to a CSPRNG exactly, by chance).
+- Cost: 40–85 ms per hop at `M=16` (more segments are protected under a worse sensor).
+
+---
+
 ## Package layout
 
 Each concern is a single flat module in `fhew/` (the former subpackages were
@@ -300,12 +370,16 @@ fhew/
   allocator.py       threshold-aware knapsack + reactive/follower + CDT knob — §7
   feasibility.py     strategy feasibility map incl. the reactive region — §10
   scenarios.py       regime-switch / long-dwell episode builders
+  tracker.py         SwitchTracker: follow a transmitter that switches algorithm at
+                     will (change-point posterior over anchored bank segments)
 configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp17 + shared style/harness
 scripts/run_all.py   run everything
-dashboard/           demo dashboard: recorder, proofs, build, live server, pages
+dashboard/           demo dashboard: recorder, proofs, build, live server, pages,
+                     control.py (the Control room session + CLI)
 tests/test_fhew.py                67 tests incl. the information-parity audit
 tests/test_mixture_allocation.py  29 tests for the mixture / regime / allocator
+tests/test_tracker.py             12 tests for the switch tracker and control-room session
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -349,5 +423,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 96 tests, ~25s
+python -m pytest        # 122 tests, ~65s
 ```

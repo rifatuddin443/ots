@@ -8,17 +8,25 @@ Static files come from ``dashboard/``; ``GET /api/run`` records one engagement
 on demand (``emitter``, ``p_d``, ``p_fa``, ``seed``) and returns the same trace
 format ``data.js`` holds. The server is single-threaded on purpose: banks are
 stateful and are reused across requests for the same sensor condition.
+
+The Control room page drives a transmitter interactively (``dashboard.control``):
+``GET /api/control/new`` (``channels``, ``hops``, ``p_d``, ``p_fa``, ``seed``)
+opens a session and ``GET /api/control/step`` (``session``, ``algo``, ``n``)
+advances it ``n`` hops with the transmitter on ``algo``, switching it when the
+algorithm changed.
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import webbrowser
 from collections import OrderedDict
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+from dashboard import control as CR
 from dashboard import traces as T
 from dashboard.build import HERE
 
@@ -50,6 +58,41 @@ def run_request(query: dict) -> dict:
     return T.record_engagement(engine_for(p_d, p_fa), emitter, seed, preset="live")
 
 
+_SESSIONS: OrderedDict = OrderedDict()
+_MAX_SESSIONS = 4
+_SESSION_IDS = itertools.count(1)
+
+
+def _arg(query: dict, key: str, default: str) -> str:
+    return query.get(key, [default])[0]
+
+
+def control_new(query: dict) -> dict:
+    session = CR.ControlSession(
+        n_channels=int(_arg(query, "channels", "16")), hops=int(_arg(query, "hops", "300")),
+        p_d=float(_arg(query, "p_d", "1")), p_fa=float(_arg(query, "p_fa", "0")),
+        seed=int(query["seed"][0]) if "seed" in query else None)
+    sid = f"s{next(_SESSION_IDS)}"
+    _SESSIONS[sid] = session
+    while len(_SESSIONS) > _MAX_SESSIONS:
+        _SESSIONS.popitem(last=False)
+    return {"session": sid, **session.info()}
+
+
+def control_step(query: dict) -> dict:
+    sid = _arg(query, "session", "")
+    if sid not in _SESSIONS:
+        raise ValueError("unknown or expired session; start a new one")
+    _SESSIONS.move_to_end(sid)
+    session = _SESSIONS[sid]
+    n = max(1, min(25, int(_arg(query, "n", "1"))))
+    records = session.step(_arg(query, "algo", "lfsr"), n)
+    return {"session": sid, "t": session.t, "done": session.done, "records": records}
+
+
+_API = {"/api/run": run_request, "/api/control/new": control_new, "/api/control/step": control_step}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(HERE), **kwargs)
@@ -67,9 +110,9 @@ class Handler(SimpleHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/api/ping":
             return self._json(200, {"live": True})
-        if url.path == "/api/run":
+        if url.path in _API:
             try:
-                return self._json(200, run_request(parse_qs(url.query)))
+                return self._json(200, _API[url.path](parse_qs(url.query)))
             except ValueError as exc:
                 return self._json(400, {"error": str(exc)})
         if url.path.endswith(".py") or "/__pycache__" in url.path:
@@ -90,6 +133,8 @@ def main(argv=None):
     print("[dashboard] warming up banks for the sensor presets ...")
     for pr in T.PRESETS:
         engine_for(pr["p_d"], pr["p_fa"])
+    print("[dashboard] building the control-room experts for 16 channels ...")
+    CR.library_for(16, 300)
     server = HTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
     print(f"[dashboard] live at {url}  (Ctrl+C to stop)")

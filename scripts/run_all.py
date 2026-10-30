@@ -34,6 +34,7 @@ from experiments import (
     exp15_regime_switch,
     exp16_allocation,
     exp17_feasibility,
+    exp18_switch_tracking,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -58,6 +59,7 @@ EXPERIMENTS = {
     "exp15": exp15_regime_switch,
     "exp16": exp16_allocation,
     "exp17": exp17_feasibility,
+    "exp18": exp18_switch_tracking,
 }
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
@@ -157,6 +159,10 @@ def _headline(name: str, r: dict) -> dict:
             return {"panelA_region_fraction":
                         {regions[i]: round(flat.count(i) / len(flat), 3)
                          for i in sorted(set(flat))}}
+        if name == "exp18":
+            return {k: {f: v[f] for f in ("detect_rate", "delay_median", "false_alarms_per_100_hops",
+                                          "final_exact", "final_soft", "dangerous_locks_per_regime")}
+                    for k, v in r["sensors"].items()}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}
