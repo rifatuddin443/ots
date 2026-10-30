@@ -11,6 +11,46 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-10-30 (latest) — Multiple transmit frequency: jam more channels when unsure
+
+Implements "transmit on several frequencies at once when the prediction is not
+confident, up to an operator-set maximum" — both in the allocator core and as a
+live control in the Control room.
+
+### Core (`fhew/allocator.py`)
+- `tones_from_confidence(kappa, max_tones)` — the rule: a sharp prediction
+  (`kappa→1`) collapses to one spot tone, a flat one (`kappa→0`) opens out to
+  `max_tones`, linearly in between (clamped to `[1, max_tones]`).
+- `greedy_knapsack(..., max_tones=None)` — caps the number of funded channels
+  (transmit frequencies); `None` keeps the original budget-bounded behaviour, so
+  nothing else changes.
+- `predictability(p, channels)` — the `κ` of a predictive vector (matches the
+  mixture's definition), so the allocator can read confidence on its own.
+- `AllocationController(max_tones=…)` — in predictive mode the active tone count
+  is `tones_from_confidence(κ, max_tones)` each slot; `AllocationStep` now carries
+  `n_tones` and `kappa`. Default `max_tones=None` ⇒ backward compatible.
+
+### Control room (the interactive "controls" surface)
+- `dashboard/control.py` records a per-hop `jam` ranking (the most-likely next
+  channels, best first) and reports `jam_cap = min(M, 8)` in the session info.
+- `dashboard/views/control.js` adds a **"Jammer · max transmit freqs"** slider to
+  the settings panel (1..`jam_cap`, display-only so it updates live without a
+  re-run). The hop chart's NEXT column lights the extra transmit frequencies
+  (amber) around the cyan top-1 call with a `jam ×N` tag; the system-view card
+  shows "Jamming next: N frequencies" with the lit channels; the accuracy card
+  shows a running multi-tone coverage stat (how often a lit tone caught the true
+  next hop). The client's top-`n` selection equals the knapsack under the Control
+  room's uniform per-channel cost, so the picture matches the allocator.
+
+### Tests
+- `tests/test_mixture_allocation.py` — 5 added: the confidence→tones mapping, the
+  `max_tones` cap (and that `None` is unchanged), the `predictability` helper, and
+  the controller's tone count following confidence (sharp→1, flat→max).
+
+Rebuild the standalone with `python -m dashboard.build --reuse --standalone ots_dashboard.html`.
+
+---
+
 ## 2026-10-30 (later) — Control-room settings panel; faster re-learning after a switch
 
 ### Settings in a side panel

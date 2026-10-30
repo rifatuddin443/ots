@@ -35,6 +35,11 @@ from fhew.tracker import ExpertLibrary, SwitchTracker, is_power_of_two
 MIN_CHANNELS, MAX_CHANNELS = 4, 64
 MIN_HOPS, MAX_HOPS = 20, 1000
 
+#: most transmit frequencies (jam tones) the control room will ever light at once;
+#: the per-hop ``jam`` ranking is capped at this, and the UI's "max transmit freqs"
+#: control runs 1..min(M, JAM_TONES_CAP).
+JAM_TONES_CAP = 8
+
 #: algorithms the transmitter can run (the dashboard's emitter list)
 ALGORITHMS = [{**e, "target": GENERATOR_TARGET_FAMILY[e["id"]],
                "needs_pow2": e["id"] in ("lfsr", "filtered_lfsr")} for e in T.EMITTERS]
@@ -109,6 +114,7 @@ class ControlSession:
             "p_d": self.sensor.p_d, "p_fa": self.sensor.p_fa,
             "labels": self.labels, "algorithms": algorithms_for(self.M),
             "segments_protected": self.tracker.protect, "build_seconds": self.build_seconds,
+            "jam_cap": min(self.M, JAM_TONES_CAP),
         }
 
     @property
@@ -153,6 +159,11 @@ class ControlSession:
         idn = st.ident
         label = "unknown" if idn.label == "H0" else idn.label
         nxt = int(np.argmax(st.forecast))
+        # Jam ranking: the most-likely next channels, best first. When the system
+        # is unsure (low kappa) the UI lights several of these at once -- a
+        # multi-tone / multiple-frequency jam, capped by the "max transmit freqs"
+        # control; a confident forecast collapses it to the single top channel.
+        jam = [int(c) for c in np.argsort(st.forecast)[::-1][:min(self.M, JAM_TONES_CAP)]]
         rec = {
             "hop": self.t + 1, "algo": self.algo, "switched": switched,
             "truth": c, "dets": sorted(int(d) for d in obs.detected_channels),
@@ -160,6 +171,7 @@ class ControlSession:
             "hit": (call == c) if call is not None else None,
             "top3_hit": (c in top3) if call is not None else None,
             "next": nxt, "next_p": _r(st.forecast[nxt], 3), "kappa": _r(tr.predictability(), 3),
+            "jam": jam,
             "id": {"label": label, "p": _r(idn.p), "locked": idn.locked,
                    "lock_hop": idn.lock_slot + 1 if idn.lock_slot is not None else None,
                    "start_hop": idn.start_slot + 1, "carrier": idn.carrier},

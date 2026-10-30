@@ -24,6 +24,15 @@ ranking. This module also carries the **reactive / follower** allocation
 reaction latency, jam the *observed* channel directly -- no prediction needed,
 whatever kappa says.
 
+On top of ``lambda`` there is an explicit **multiple-transmit-frequency** cap:
+``max_tones`` bounds how many channels (tones) the predictive allocator may light
+up in one slot. The *active* count scales with prediction confidence
+(:func:`tones_from_confidence`) -- a sharp prediction concentrates to a single
+spot tone, and an unsure one opens out to ``max_tones``. ``max_tones`` is the
+operator control ("how many frequencies may we transmit on at once when we are
+not sure?"); a real jammer has a finite number of tone generators, and this is
+that limit.
+
 Everything here is pure numpy over the predictive distribution and a shared
 effect model; the same ``g`` and ``tau`` drive the conformal loss, so the risk
 guarantee and the allocation agree (the "one thing to check", Section 15).
@@ -93,8 +102,49 @@ def _effective_mask(channels: ChannelSet) -> np.ndarray:
     return mask
 
 
+def predictability(p: np.ndarray, channels: ChannelSet | None = None) -> float:
+    """Confidence score ``kappa = 1 - H(p)/log M`` of a predictive vector.
+
+    Matches :meth:`fhew.mixture.FixedShareMixture.predictability` (Section 4.7):
+    ``kappa = 1`` means the next channel is pinned down (sharp prediction),
+    ``kappa = 0`` means the mass is uniform (we are *not sure* at all). The
+    multi-tone cap below reads this to decide how many frequencies to light up.
+    """
+    p = np.asarray(p, dtype=np.float64)
+    s = p.sum()
+    if s <= 0:
+        return 0.0
+    p = p / s
+    nz = p[p > 0]
+    H = float(-(nz * np.log(nz)).sum())
+    M = p.size if channels is None else channels.size
+    return float(np.clip(1.0 - H / np.log(M), 0.0, 1.0))
+
+
+def tones_from_confidence(kappa: float, max_tones: int, *, min_tones: int = 1) -> int:
+    """How many transmit frequencies to light up given prediction confidence.
+
+    This is the "multiple transmit frequency" rule: **when we are not too sure
+    about the prediction, spread across more frequencies, up to an operator-set
+    maximum.** The count grows linearly as confidence falls --
+
+        n = round(min_tones + (max_tones - min_tones) * (1 - kappa))
+
+    so a sharp prediction (``kappa -> 1``) collapses to ``min_tones`` (a single
+    spot tone) and a flat one (``kappa -> 0``) opens all ``max_tones`` tones. The
+    result is clamped to ``[min_tones, max_tones]``. ``max_tones`` is the knob
+    exposed in the controls; raising it lets the system hedge across more
+    channels when it is uncertain, at the cost of less power per tone.
+    """
+    max_tones = max(int(max_tones), int(min_tones))
+    kappa = float(np.clip(kappa, 0.0, 1.0))
+    n = min_tones + (max_tones - min_tones) * (1.0 - kappa)
+    return int(np.clip(round(n), min_tones, max_tones))
+
+
 def greedy_knapsack(p: np.ndarray, effect: EffectModel, budget: float, *,
-                    lam: float = 0.0, channels: ChannelSet | None = None) -> np.ndarray:
+                    lam: float = 0.0, channels: ChannelSet | None = None,
+                    max_tones: int | None = None) -> np.ndarray:
     """Greedy threshold-aware knapsack allocation (main method, Section 7.2).
 
     1. Raise a conservatism floor on the predictive: ``p' = (1-lam) p + lam u``
@@ -103,6 +153,13 @@ def greedy_knapsack(p: np.ndarray, effect: EffectModel, budget: float, *,
     2. Rank channels by value density ``p'_i / c_i``.
     3. Fully fund channels in that order until the budget runs out; spend any
        remainder partially on the next channel.
+
+    ``max_tones`` caps the number of channels (transmit frequencies) that may be
+    funded in one slot. ``None`` (default) leaves the count implicit, bounded
+    only by the budget -- the original behaviour. A finite cap models a jammer
+    with a fixed number of tone generators: no more than ``max_tones`` channels
+    are ever lit, and any budget left after the cap is reached goes unspent
+    (power beyond ``tau`` on a funded channel is wasted anyway).
     """
     p = np.asarray(p, dtype=np.float64)
     M = p.size
@@ -119,12 +176,15 @@ def greedy_knapsack(p: np.ndarray, effect: EffectModel, budget: float, *,
     order = np.argsort(density)[::-1]
     power = np.zeros(M, dtype=np.float64)
     remaining = float(budget)
+    cap = M if max_tones is None else max(1, int(max_tones))
+    funded = 0
     for i in order:
-        if remaining <= 0 or p_eff[i] <= 0:
+        if remaining <= 0 or p_eff[i] <= 0 or funded >= cap:
             break
         pay = min(costs[i], remaining)
         power[i] = pay
         remaining -= pay
+        funded += 1
     return power
 
 
@@ -236,6 +296,8 @@ class AllocationStep:
     lam: float
     effect_on_true: float      # realised jamming effect on the true next channel
     loss_forgone: float        # 1 - effect_on_true, in [0, 1]
+    n_tones: int = 0           # transmit frequencies actually lit this slot
+    kappa: float = float("nan")  # prediction confidence that set the tone count
 
 
 class AllocationController:
@@ -251,13 +313,21 @@ class AllocationController:
 
     def __init__(self, effect: EffectModel, budget: float, *,
                  reaction_latency: float = 1.0, cdt: CDTController | None = None,
-                 allocator: str = "greedy_knapsack"):
+                 allocator: str = "greedy_knapsack", max_tones: int | None = None):
         self.effect = effect
         self.channels = effect.channels
         self.budget = float(budget)
         self.reaction_latency = float(reaction_latency)
         self.cdt = cdt or CDTController()
         self.allocator = allocator
+        # Maximum number of transmit frequencies (tones) the predictive allocator
+        # may light up in one slot. ``None`` leaves the count budget-bounded
+        # (original behaviour). When set, the active count scales with prediction
+        # confidence (:func:`tones_from_confidence`): sharp -> 1 tone, unsure ->
+        # up to ``max_tones``.
+        self.max_tones = None if max_tones is None else max(1, int(max_tones))
+        self.last_n_tones = 0
+        self.last_kappa = float("nan")
 
     def allocate(self, p: np.ndarray, *, observed_channel: int | None = None,
                  dwell_estimate: float = 1.0, current_run: int = 0) -> tuple[np.ndarray, str]:
@@ -266,14 +336,21 @@ class AllocationController:
         Reactive / follower mode is chosen when the emitter's estimated dwell
         exceeds the reaction latency (the feasibility condition, independent of
         kappa) and a current channel has been observed to follow.
+
+        In predictive mode with ``max_tones`` set, the number of frequencies lit
+        this slot is driven by the prediction confidence ``kappa``: a confident
+        prediction concentrates to a single tone, an unsure one spreads across up
+        to ``max_tones`` tones.
         """
+        self.last_kappa = predictability(p, self.channels)
         reactive = (observed_channel is not None
                     and dwell_estimate > self.reaction_latency
                     and current_run >= self.reaction_latency)
         if reactive:
-            return (reactive_follower(observed_channel, self.effect, self.budget,
-                                      p=p, lam=self.cdt.lam, channels=self.channels),
-                    "reactive")
+            power = reactive_follower(observed_channel, self.effect, self.budget,
+                                      p=p, lam=self.cdt.lam, channels=self.channels)
+            self.last_n_tones = int((power > 1e-12).sum())
+            return power, "reactive"
         if self.allocator == "water_filling":
             power = water_filling(p, self.effect, self.budget, channels=self.channels)
         elif self.allocator == "weighted_water_filling":
@@ -284,8 +361,11 @@ class AllocationController:
         elif self.allocator == "spot":
             power = spot(p, self.effect, self.budget)
         else:
+            cap = (None if self.max_tones is None
+                   else tones_from_confidence(self.last_kappa, self.max_tones))
             power = greedy_knapsack(p, self.effect, self.budget, lam=self.cdt.lam,
-                                    channels=self.channels)
+                                    channels=self.channels, max_tones=cap)
+        self.last_n_tones = int((power > 1e-12).sum())
         return power, "predictive"
 
     def step(self, p: np.ndarray, true_next: int, *, observed_channel: int | None = None,
@@ -297,4 +377,5 @@ class AllocationController:
         loss = 1.0 - eff
         self.cdt.update(loss)
         return AllocationStep(power=power, mode=mode, lam=self.cdt.lam,
-                              effect_on_true=eff, loss_forgone=loss)
+                              effect_on_true=eff, loss_forgone=loss,
+                              n_tones=self.last_n_tones, kappa=self.last_kappa)

@@ -136,6 +136,10 @@
 .ctl-ev b { color: var(--ink); font-weight: 600; }
 .ctl-table-wrap { overflow-x: auto; }
 .ctl-table td .sq { margin-right: 7px; vertical-align: -1px; }
+.ctl-jam label { grid-template-columns: 1fr 34px; }
+.ctl-tones { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.ctl-tone { font: 600 11px/1 var(--mono); padding: 3px 7px; border-radius: 4px; background: var(--raise); color: var(--ink-2); border: 1px solid var(--grid); }
+.ctl-tone.lead { background: var(--accent-soft); color: var(--accent-ink); border-color: rgba(34, 211, 238, 0.5); }
 `;
   function injectCss() {
     if (!document.getElementById("css-ctl")) document.head.append(el("style", { id: "css-ctl" }, CSS));
@@ -170,6 +174,11 @@
   const idName = (label) => (label === "unknown" ? "Unknown" : OTS.hypName(label));
   const sure = (p) => (p >= 0.9995 ? ">99.9%" : p >= 0.995 ? (p * 100).toFixed(1) + "%" : Math.round(p * 100) + "%");
   const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
+  const JAM_CAP_MAX = 8;   // never light more than this many transmit frequencies at once
+  // How many transmit frequencies to light given prediction confidence `kappa` and a
+  // selectable maximum: a confident call (kappa->1) collapses to one spot tone, an
+  // unsure one (kappa->0) opens out to `max`. Mirrors fhew.allocator.tones_from_confidence.
+  const tonesFor = (kappa, max) => clamp(Math.round(1 + (max - 1) * (1 - clamp(kappa || 0, 0, 1))), 1, max);
 
   // ================================================================ state
   // Module level, so a session survives switching to another page and back.
@@ -186,6 +195,19 @@
     try { const v = localStorage.getItem(PANEL_KEY); if (v != null) return v === "1"; } catch (_) { /* storage unavailable */ }
     return window.innerWidth > 1100;
   })();
+  // Max transmit frequencies the jammer may light at once (the "multiple transmit
+  // frequency" control). Display-only: changing it re-renders from the recorded
+  // forecast ranking, never re-runs the engagement.
+  const MAXTONES_KEY = "ots.control.maxtones";
+  let maxTones = (() => {
+    try { const v = localStorage.getItem(MAXTONES_KEY); if (v != null) return clamp(Math.round(+v) || 3, 1, JAM_CAP_MAX); } catch (_) { /* storage unavailable */ }
+    return 3;
+  })();
+  function setMaxTones(n) {
+    maxTones = clamp(Math.round(n) || 1, 1, JAM_CAP_MAX);
+    try { localStorage.setItem(MAXTONES_KEY, String(maxTones)); } catch (_) { /* storage unavailable */ }
+    refresh();
+  }
 
   const sensorOf = (cfg) => (cfg.sensor === "custom" ? { id: "custom", name: "Custom", ...cfg.custom } : SENSORS().find((s) => s.id === cfg.sensor));
   const done = () => !!(S.sess && S.recs.length >= S.sess.hops);
@@ -272,6 +294,27 @@
     for (let i = from; i < to; i++) { const r = S.recs[i]; if (r.hit == null) continue; n++; if (r.hit) h++; }
     return { n, h, rate: n ? h / n : null };
   }
+  /** Ceiling on transmit freqs: the user's max, capped by the channel count. */
+  function jamCap() {
+    const base = S.sess && !cfgChanged() ? (S.sess.jam_cap || JAM_CAP_MAX) : Math.min(S.cfg.M, JAM_CAP_MAX);
+    return clamp(base, 1, JAM_CAP_MAX);
+  }
+  /** Channels the jammer lights for record r: the top-n of its forecast ranking,
+   *  n chosen from confidence (unsure spreads wider), capped by the max control. */
+  function litTones(r) {
+    if (!r || !r.jam || !r.jam.length) return [];
+    return r.jam.slice(0, tonesFor(r.kappa, Math.min(maxTones, jamCap())));
+  }
+  /** Multi-tone coverage over [from,to): did a lit tone cover the true NEXT channel? */
+  function jamStats(from = 0, to = S.recs.length) {
+    let n = 0, c = 0, tones = 0;
+    for (let i = from; i < to - 1; i++) {          // needs the following hop's truth
+      const r = S.recs[i]; if (!r.jam) continue;
+      const lit = litTones(r); n++; tones += lit.length;
+      if (lit.includes(S.recs[i + 1].truth)) c++;
+    }
+    return { n, covered: c, rate: n ? c / n : null, meanTones: n ? tones / n : 0 };
+  }
   /** Transmitter regimes from the records: [{algo, start (0-based index), end (exclusive), regime}]. */
   function regimes() {
     const out = [];
@@ -335,9 +378,19 @@
     root.append(svg("text", { class: "nx-t", x: nx + colW / 2, y: m.t - 22, "text-anchor": "middle" }, "NEXT"));
     const ringR = Math.max(4.5, Math.min(colW, rowH) * 0.42), dotR = clamp(Math.min(colW, rowH) * 0.2, 1.8, 3.8);
     const acc = OTS.tok("accent"), bad = OTS.tok("serious"), det = OTS.tok("det");
+    let nextLit = [];
     if (t && !done()) {
       const r = recs[t - 1];
+      nextLit = litTones(r);
+      const jamCol = OTS.tok("warning");
+      // the extra transmit frequencies the jammer opens when unsure (the top-1 keeps
+      // the cyan call ring below); more bars = lower confidence, up to the max control
+      nextLit.forEach((ch, i) => {
+        if (i === 0) return;
+        root.append(svg("rect", { x: nx + colW * 0.18, y: cy(ch) - rowH * 0.3, width: colW * 0.64, height: Math.max(3, rowH * 0.6), rx: 2, fill: jamCol, opacity: 0.55 }));
+      });
       root.append(svg("circle", { cx: nx + colW / 2, cy: cy(r.next), r: ringR, fill: "rgba(34, 211, 238, 0.18)", stroke: acc, "stroke-width": 2 }));
+      if (nextLit.length > 1) root.append(svg("text", { class: "nx-t", x: nx + colW / 2, y: m.t - 8, "text-anchor": "middle", fill: jamCol }, `jam ×${nextLit.length}`));
     }
     const band = svg("rect", { x: 0, y: m.t, width: colW, height: ih, fill: "rgba(232, 238, 247, 0.06)", visibility: "hidden" });
     root.append(band);
@@ -352,7 +405,7 @@
       for (let h = lo; h <= t; h++) d += (h === lo ? "M" : "L") + cx(h - first).toFixed(1) + " " + cy(recs[h - 1].truth).toFixed(1);
       g.append(svg("path", { d, fill: "none", stroke: "rgba(232, 238, 247, 0.32)", "stroke-width": 1.25, "stroke-linejoin": "round" }));
     }
-    const seen = { dot: false, hit: false, miss: false, ghost: false, lost: false };
+    const seen = { dot: false, hit: false, miss: false, ghost: false, lost: false, jam: nextLit.length > 1 };
     for (let h = lo; h <= t; h++) {
       const col = h - first, x = cx(col), r = recs[h - 1], x0 = m.l + col * colW;
       if (h % xStep === 0) {
@@ -413,6 +466,8 @@
       { value: fmt.ch(r.truth), label: r.dets.includes(r.truth) ? "true channel" : "true channel · missed" },
     ];
     if (r.call != null) rows.push({ value: fmt.ch(r.call), label: `system's call · ${sure(r.call_p)} sure · ${r.hit ? "✓ right" : "✗ wrong"}` });
+    const lit = litTones(r);
+    if (lit.length) rows.push({ value: lit.map(fmt.ch).join(", "), label: `jam · ${lit.length} freq${lit.length === 1 ? "" : "s"}${lit.length > 1 ? " (unsure → spread)" : " (confident → spot)"}`, color: OTS.tok("warning"), kind: "square" });
     rows.push({ value: idName(r.id.label), label: `system thinks · ${sure(r.id.p)}${r.id.locked ? " · locked" : ""}`, color: familyColor(r.id.label), kind: "square" });
     if (r.switch_detected) rows.push({ value: "⚑", label: `switch detected · started hop ${r.id.start_hop}` });
     return { title: `Hop ${r.hop}`, rows };
@@ -424,6 +479,7 @@
     if (seen.miss) items.push({ label: "System's call · wrong", color: OTS.tok("serious"), kind: "square" });
     if (seen.ghost) items.push({ label: "Ghost (false alarm)", kind: "x" });
     if (seen.lost) items.push({ label: "Missed hop (true channel)", kind: "hollow" });
+    if (seen.jam) items.push({ label: "Extra jam freqs (unsure)", color: OTS.tok("warning"), kind: "square" });
     OTS.clear(box).append(items.length ? OTS.chart.legend(items) : "");
   }
 
@@ -570,6 +626,14 @@
     const carrier = { bank: "the identified expert", context_mixing: "the universal learner (context mixing)", phase_space: "the phase-space predictor", recurrence: "the recurrence learner (fits a modular linear rule)" }[id.carrier] || id.carrier;
     kv.push(["Predicting", done() ? "session finished" : [el("b", {}, `channel ${fmt.ch(r.next)}`), ` next · ${sure(r.next_p)} sure`]]);
     kv.push(["Carried by", carrier]);
+    if (!done()) {
+      const lit = litTones(r), n = lit.length, cap = Math.min(maxTones, jamCap());
+      kv.push(["Jamming next", [
+        el("b", {}, `${n} frequenc${n === 1 ? "y" : "ies"}`),
+        n > 1 ? ` · unsure, spread (max ${cap})` : " · confident, spot",
+        el("div", { class: "ctl-tones" }, lit.map((c, i) => el("span", { class: "ctl-tone" + (i === 0 ? " lead" : "") }, fmt.ch(c)))),
+      ]]);
+    }
     card.append(el("dl", { class: "ctl-kv" }, kv.map(([k, val]) => [el("dt", {}, k), el("dd", {}, val)])));
     // race: marginal family posterior
     const labels = S.sess.labels, order = labels.map((l, k) => ({ l, p: r.post[k] })).sort((a, b) => b.p - a.p).slice(0, 5);
@@ -662,6 +726,13 @@
     };
     const sliders = el("div", { class: "ctl-sliders" }, slider("Pd", "p_d", 0.5, 1, 0.01), slider("Pfa", "p_fa", 0, 0.1, 0.005));
     const help = el("div", { class: "ctl-help" });
+    // "Multiple transmit frequency" control: how many frequencies the jammer may
+    // light at once. Display-only (no new session), so it updates live as you drag.
+    const jamVal = el("span", { class: "num" });
+    const jamInp = el("input", { type: "range", min: 1, max: jamCap(), step: 1, value: Math.min(maxTones, jamCap()), "aria-label": "Maximum transmit frequencies" });
+    jamInp.addEventListener("input", () => setMaxTones(+jamInp.value));
+    const jamBox = el("div", { class: "ctl-sliders ctl-jam" }, el("label", {}, jamInp, jamVal));
+    const jamHelp = el("div", { class: "ctl-help" });
     const startBtn = el("button", { class: "btn", onclick: () => newSession() });
     const status = el("span", { class: "small ink2" });
     const speeds = SPEEDS.map((sp) => [sp.v, el("button", { class: "btn", onclick: () => { S.speed = sp.v; refresh(); },
@@ -680,6 +751,7 @@
       sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
       sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
       sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
+      sec("Jammer · max transmit freqs", jamBox, jamHelp),
       sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
       sec("Show on the chart", toggles.map((x) => x.node),
         el("div", { class: "ctl-help" }, "The system never sees these: they are drawn for you.")));
@@ -691,6 +763,12 @@
       if (document.activeElement !== inM) inM.value = S.cfg.M;
       if (document.activeElement !== inH) inH.value = S.cfg.hops;
       sliders.hidden = S.cfg.sensor !== "custom";
+      const cap = jamCap(), mt = Math.min(maxTones, cap);
+      jamInp.max = cap;
+      if (document.activeElement !== jamInp) jamInp.value = mt;
+      jamVal.textContent = String(mt);
+      OTS.clear(jamHelp).append("When the system is unsure it spreads the jam across up to ",
+        el("b", {}, String(mt)), ` frequenc${mt === 1 ? "y" : "ies"}; a confident call uses one. Capped at ${cap} for ${S.cfg.M} channels.`);
       const s = sensorOf(S.cfg), ghosts = s.p_fa * (S.cfg.M - 1);
       const hk = [s.p_d, s.p_fa, S.cfg.M].join("|");
       if (hk !== helpKey) {
@@ -761,7 +839,11 @@
       el("span", { class: "ctl-acc-v" }, all.n ? [el("b", {}, `${all.h} of ${all.n}`), " right · ", pct(all.rate)] : "no calls yet"),
       el("span", { class: "ctl-acc-s" }, lastSw && lastSw.hop > 1 && since.n ? `since your last switch: ${since.h} of ${since.n} (${pct(since.rate)})` : ""),
       el("div", { class: "ctl-acc-bar", title: `random guessing: 1 in ${M}` }, el("i", { style: `width:${((all.rate || 0) * 100).toFixed(1)}%` }), el("em", { style: `left:${(100 / M).toFixed(2)}%` })),
-      el("span", { class: "ctl-acc-s" }, `random guessing: 1 in ${M} (${pct(1 / M)})`));
+      el("span", { class: "ctl-acc-s" }, `random guessing: 1 in ${M} (${pct(1 / M)})`),
+      (() => { const js = jamStats(); const cap = Math.min(maxTones, jamCap());
+        return el("span", { class: "ctl-acc-s" }, js.n
+          ? `multi-tone jam (≤${cap} freq${cap === 1 ? "" : "s"}) covers ${pct(js.rate)} of next hops · avg ${js.meanTones.toFixed(1)} lit`
+          : ""); })());
   }
 
   function offline() {

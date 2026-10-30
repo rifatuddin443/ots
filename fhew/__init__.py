@@ -55,7 +55,8 @@ def __getattr__(name):
     if name in ("RegimeController", "make_detector", "recovery_time"):
         import fhew.regime as r
         return getattr(r, name)
-    if name in ("EffectModel", "AllocationController", "CDTController"):
+    if name in ("EffectModel", "AllocationController", "CDTController",
+                "greedy_knapsack", "tones_from_confidence", "predictability"):
         import fhew.allocator as a
         return getattr(a, name)
     raise AttributeError(f"module 'fhew' has no attribute {name!r}")

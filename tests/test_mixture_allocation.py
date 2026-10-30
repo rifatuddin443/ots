@@ -20,7 +20,9 @@ from fhew.allocator import (
     EffectModel,
     equal_power,
     greedy_knapsack,
+    predictability,
     reactive_follower,
+    tones_from_confidence,
     water_filling,
 )
 from fhew.dwell import DwellTracker, dwell_predictability, estimate_dwell
@@ -275,6 +277,57 @@ def test_knapsack_beats_waterfilling_on_flat_prediction():
     true = 7
     # threshold-aware allocation denies some channels; water-filling denies none
     assert eff.effect(kn).max() > eff.effect(wf).max()
+
+
+# ---------------------------- multiple transmit frequency (confidence-capped tones)
+def test_predictability_helper_matches_entropy():
+    ch = ChannelSet.of_size(M)
+    assert abs(predictability(ch.uniform(), ch) - 0.0) < 1e-9        # flat -> 0
+    one_hot = np.zeros(M); one_hot[4] = 1.0
+    assert abs(predictability(one_hot, ch) - 1.0) < 1e-9             # pinned -> 1
+    assert predictability(np.zeros(M), ch) == 0.0                    # degenerate -> 0
+
+
+def test_tones_from_confidence_scales_with_uncertainty():
+    assert tones_from_confidence(1.0, 5) == 1        # confident -> single spot tone
+    assert tones_from_confidence(0.0, 5) == 5        # unsure -> all the way to max
+    assert tones_from_confidence(0.5, 5) == 3        # mid -> in between
+    # monotone non-increasing in confidence, always within [1, max]
+    vals = [tones_from_confidence(k / 10, 5) for k in range(11)]
+    assert vals == sorted(vals, reverse=True)
+    assert min(vals) >= 1 and max(vals) <= 5
+    assert tones_from_confidence(0.0, 1) == 1        # max=1 degenerates to spot
+
+
+def test_knapsack_max_tones_caps_funded_channels():
+    eff = _effect()
+    flat = np.full(M, 1.0 / M)
+    # ample budget would otherwise fund many channels; the cap limits the count
+    uncapped = greedy_knapsack(flat, eff, budget=20.0, lam=0.5)
+    capped = greedy_knapsack(flat, eff, budget=20.0, lam=0.5, max_tones=3)
+    assert int((uncapped > 1e-12).sum()) > 3
+    assert int((capped > 1e-12).sum()) == 3
+    assert capped.sum() <= uncapped.sum() + 1e-9      # never spends more than uncapped
+
+
+def test_knapsack_max_tones_none_is_unchanged():
+    eff = _effect()
+    p = np.full(M, 1.0 / M)
+    a = greedy_knapsack(p, eff, budget=3.0, lam=0.3)
+    b = greedy_knapsack(p, eff, budget=3.0, lam=0.3, max_tones=None)
+    assert np.allclose(a, b)
+
+
+def test_allocation_controller_tone_count_follows_confidence():
+    eff = _effect()
+    ctrl = AllocationController(eff, budget=12.0, max_tones=5,
+                               cdt=CDTController(alpha=0.2, eta=0.0, lam0=0.0))
+    sharp = np.zeros(M); sharp[3] = 0.97; sharp[4] = 0.03
+    step_sharp = ctrl.step(sharp, true_next=3)
+    assert step_sharp.n_tones == 1 and step_sharp.kappa > 0.8     # confident -> spot
+    flat = np.full(M, 1.0 / M)
+    step_flat = ctrl.step(flat, true_next=0)
+    assert step_flat.n_tones == 5 and step_flat.kappa < 0.05      # unsure -> max tones
 
 
 def test_reactive_follower_denies_observed_channel():

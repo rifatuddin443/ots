@@ -113,7 +113,7 @@ runs recorded by `python -m dashboard.build`:
 | --- | --- |
 | **Story** | the problem in three steps and the headline results |
 | **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
-| **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. Channels, hops, sensor (including a perfect, 100%-accurate one), speed and chart overlays live in a settings side panel you can pop in and out |
+| **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. It also **jams on multiple transmit frequencies when it is not sure**: a confident call lights one tone (spot), a flat one spreads across up to a **"max transmit freqs"** you set in the panel (the hop chart's NEXT column shows the lit tones, and a running coverage stat shows how often a lit tone caught the true next hop). Channels, hops, sensor (including a perfect, 100%-accurate one), speed, the transmit-freq cap and chart overlays live in a settings side panel you can pop in and out |
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
@@ -237,7 +237,7 @@ existing `Expert` interface.
 | Fixed-Share mixture | `fhew/mixture.py` | Weights experts (bank + universal + Markov + barrage) by *recent* log-loss with a share floor `α>0`, so a dead expert recovers after a switch |
 | Regime monitor | `fhew/regime.py` | CUSUM / BOCPD / conformal-e change detector on the loss stream; on an alarm **resets the weights AND flushes the universal predictor's context** (exponential forgetting) — closing the gap where a weights-only reset left stale context mispredicting |
 | Dwell feature | `fhew/dwell.py` | Online dwell estimate; a predictability contribution and the reactive-jamming trigger |
-| Multi-tone allocator | `fhew/allocator.py` | Threshold-aware greedy knapsack over the predictive (spot↔barrage from one knob `λ`, CDT-calibrated), reactive/follower mode, water-filling baselines |
+| Multi-tone allocator | `fhew/allocator.py` | Threshold-aware greedy knapsack over the predictive (spot↔barrage from one knob `λ`, CDT-calibrated), reactive/follower mode, water-filling baselines. A **confidence-capped tone count** (`tones_from_confidence` + `max_tones`) lights one transmit frequency when the prediction is sharp and spreads to an operator-set maximum when it is not — the "multiple transmit frequency" control surfaced in the Control room |
 | Feasibility map | `fhew/feasibility.py` | Adds the reactive-follower region (dwell > reaction latency, regardless of κ) |
 | Scenarios | `fhew/scenarios.py` | Regime-switch and long-dwell episode builders + the entropy-max adversary |
 
