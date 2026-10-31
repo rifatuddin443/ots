@@ -140,6 +140,15 @@
 .ctl-tones { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .ctl-tone { font: 600 11px/1 var(--mono); padding: 3px 7px; border-radius: 4px; background: var(--raise); color: var(--ink-2); border: 1px solid var(--grid); }
 .ctl-tone.lead { background: var(--accent-soft); color: var(--accent-ink); border-color: rgba(34, 211, 238, 0.5); }
+.ctl-txpanel { padding-bottom: 12px; margin-bottom: 6px; border-bottom: 1px solid var(--grid); }
+.ctl-txpanel .card-h { padding: 0 0 6px; border: 0; }
+.ctl-txpanel .card-t { font-size: 13px; }
+.ctl-txpanel .ctl-group { margin-top: 10px; }
+.ctl-txpanel .ctl-transport { margin-top: 10px; }
+.ctl-scrub { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ctl-scrub input[type=range] { flex: 1; min-width: 70px; accent-color: var(--accent); }
+.ctl-scrub .btn { padding: 4px 9px; }
+.ctl-scrub .ctl-help { margin: 0; white-space: nowrap; }
 `;
   function injectCss() {
     if (!document.getElementById("css-ctl")) document.head.append(el("style", { id: "css-ctl" }, CSS));
@@ -208,6 +217,10 @@
     try { localStorage.setItem(MAXTONES_KEY, String(maxTones)); } catch (_) { /* storage unavailable */ }
     refresh();
   }
+  // Hop-chart scrubbing: the last hop shown in the chart window. null = follow the
+  // latest hop (the default); a number pins the view so you can scroll back through
+  // past hops without stopping the run.
+  let viewEnd = null;
 
   const sensorOf = (cfg) => (cfg.sensor === "custom" ? { id: "custom", name: "Custom", ...cfg.custom } : SENSORS().find((s) => s.id === cfg.sensor));
   const done = () => !!(S.sess && S.recs.length >= S.sess.hops);
@@ -238,7 +251,7 @@
     try {
       S.sess = await api(`api/control/new?channels=${S.cfg.M}&hops=${S.cfg.hops}&p_d=${s.p_d}&p_fa=${s.p_fa}`);
       S.sess.sensorName = s.id === "perfect" ? "perfect" : s.name.toLowerCase();
-      S.recs = []; S.algo = null;
+      S.recs = []; S.algo = null; viewEnd = null;
       return true;
     } catch (err) {
       S.error = "Could not start a session: " + err.message;
@@ -349,16 +362,17 @@
   function renderHop(box) {
     const W = box.clientWidth; if (!W) return;
     const sess = S.sess, recs = S.recs, t = recs.length;
+    const end = viewEnd != null ? clamp(viewEnd, 1, t) : t;   // last hop shown (scrubbing)
     const M = sess ? sess.channels : S.cfg.M;
     const m = { l: 46, r: 10, t: 50, b: 58 };
     const iw = Math.max(160, W - m.l - m.r);
     const N = clamp(Math.floor(iw / 18) - 1, 10, 48), colW = iw / (N + 1);
     const ih = Math.round(clamp(220 + iw * 0.18, 240, 400)), rowH = ih / M, H = m.t + ih + m.b;
-    const first = t - N + 1;                         // hop number shown in column 0
+    const first = end - N + 1;                       // hop number shown in column 0
     const cx = (col) => m.l + (col + 0.5) * colW, cy = (ch) => m.t + ih - (ch + 0.5) * rowH;
     const truthOn = !!OTS.prefs.truth, pathOn = !!OTS.prefs.path;
     const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
-      "aria-label": t ? `Hop chart, hops ${Math.max(1, first)} to ${t}: sensor detections, the system's calls and the next-hop call.` : "Hop chart: waiting for the first hop." });
+      "aria-label": t ? `Hop chart, hops ${Math.max(1, first)} to ${end}: sensor detections, the system's calls and the next-hop call.` : "Hop chart: waiting for the first hop." });
     const yStep = Math.max(1, Math.ceil(13 / rowH));
     for (let c = 0; c < M; c += yStep) {
       root.append(svg("line", { class: "gl", x1: m.l, x2: m.l + (N + 1) * colW, y1: cy(c), y2: cy(c) }));
@@ -379,8 +393,9 @@
     const ringR = Math.max(4.5, Math.min(colW, rowH) * 0.42), dotR = clamp(Math.min(colW, rowH) * 0.2, 1.8, 3.8);
     const acc = OTS.tok("accent"), bad = OTS.tok("serious"), det = OTS.tok("det");
     let nextLit = [];
-    if (t && !done()) {
-      const r = recs[t - 1];
+    const showNext = end >= 1 && (end < t || !done());   // a hop after the last shown exists
+    if (showNext) {
+      const r = recs[end - 1];
       nextLit = litTones(r);
       const jamCol = OTS.tok("warning");
       // the extra transmit frequencies the jammer opens when unsure (the top-1 keeps
@@ -400,13 +415,13 @@
     root.append(g);
     const xStep = [1, 2, 5, 10, 20].find((s) => s * colW >= 30) || 20;
     const lo = Math.max(1, first);
-    if (pathOn && t >= lo) {
+    if (pathOn && end >= lo) {
       let d = "";
-      for (let h = lo; h <= t; h++) d += (h === lo ? "M" : "L") + cx(h - first).toFixed(1) + " " + cy(recs[h - 1].truth).toFixed(1);
+      for (let h = lo; h <= end; h++) d += (h === lo ? "M" : "L") + cx(h - first).toFixed(1) + " " + cy(recs[h - 1].truth).toFixed(1);
       g.append(svg("path", { d, fill: "none", stroke: "rgba(232, 238, 247, 0.32)", "stroke-width": 1.25, "stroke-linejoin": "round" }));
     }
     const seen = { dot: false, hit: false, miss: false, ghost: false, lost: false, jam: nextLit.length > 1 };
-    for (let h = lo; h <= t; h++) {
+    for (let h = lo; h <= end; h++) {
       const col = h - first, x = cx(col), r = recs[h - 1], x0 = m.l + col * colW;
       if (h % xStep === 0) {
         g.append(svg("line", { class: "ax", x1: x, x2: x, y1: m.t + ih, y2: m.t + ih + 4 }));
@@ -432,7 +447,7 @@
       }
     }
     // markers: the real switch (truth) and the moment the system detected one
-    for (let h = lo; h <= t; h++) {
+    for (let h = lo; h <= end; h++) {
       const r = recs[h - 1], col = h - first;
       if (r.switched && h > 1) {
         const x = m.l + col * colW;
@@ -452,7 +467,7 @@
     root.addEventListener("pointermove", (ev) => {
       const b = root.getBoundingClientRect(), x = (ev.clientX - b.left) * (W / b.width);
       const col = Math.floor((x - m.l) / colW), h = first + col;
-      if (col < 0 || col >= N || h < 1 || h > t) { band.setAttribute("visibility", "hidden"); OTS.tip.hide(); return; }
+      if (col < 0 || col >= N || h < 1 || h > end) { band.setAttribute("visibility", "hidden"); OTS.tip.hide(); return; }
       band.setAttribute("x", m.l + col * colW); band.setAttribute("visibility", "visible");
       OTS.tip.show(ev, hopTip(recs[h - 1]));
     });
@@ -467,7 +482,14 @@
     ];
     if (r.call != null) rows.push({ value: fmt.ch(r.call), label: `system's call · ${sure(r.call_p)} sure · ${r.hit ? "✓ right" : "✗ wrong"}` });
     const lit = litTones(r);
-    if (lit.length) rows.push({ value: lit.map(fmt.ch).join(", "), label: `jam · ${lit.length} freq${lit.length === 1 ? "" : "s"}${lit.length > 1 ? " (unsure → spread)" : " (confident → spot)"}`, color: OTS.tok("warning"), kind: "square" });
+    if (lit.length) {
+      const nextR = S.recs[r.hop];                 // the hop this jam plans to deny
+      const caught = nextR ? lit.includes(nextR.truth) : null;
+      rows.push({ value: lit.map(fmt.ch).join(", "),
+        label: `jam → next hop · ${lit.length} freq${lit.length === 1 ? "" : "s"}${lit.length > 1 ? " (unsure → spread)" : " (confident → spot)"}`
+          + (caught == null ? "" : caught ? " · ✓ caught it" : " · ✗ missed"),
+        color: OTS.tok("warning"), kind: "square" });
+    }
     rows.push({ value: idName(r.id.label), label: `system thinks · ${sure(r.id.p)}${r.id.locked ? " · locked" : ""}`, color: familyColor(r.id.label), kind: "square" });
     if (r.switch_detected) rows.push({ value: "⚑", label: `switch detected · started hop ${r.id.start_hop}` });
     return { title: `Hop ${r.hop}`, rows };
@@ -789,7 +811,7 @@
     };
   }
 
-  function makeTx(card, openPanel) {
+  function makeTx(card, openPanel, inPanel = false) {
     const buttons = new Map();
     card.append(el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Transmitter"),
       el("p", { class: "card-d" }, "Press an algorithm to put the radio on air. It keeps hopping with it until you press another one, which switches it mid-test with a fresh secret."))));
@@ -808,7 +830,7 @@
     const chip = el("button", { class: "chip ctl-chip", onclick: openPanel, title: "Open the settings panel (S)" });
     const clockN = el("b", { class: "num" }), clockT = document.createTextNode("");
     const msg = el("div", { class: "ctl-help", role: "status" });
-    card.append(el("div", { class: "ctl-transport" }, playBtn, stepBtn, chip, el("span", { class: "grow" }),
+    card.append(el("div", { class: "ctl-transport" }, playBtn, stepBtn, ...(inPanel ? [] : [chip]), el("span", { class: "grow" }),
       el("span", { class: "ctl-clock" }, "HOP ", clockN, clockT)), msg);
     return function update() {
       for (const [id, { b, small, e }] of buttons) {
@@ -823,7 +845,7 @@
       playBtn.disabled = !S.algo || done() || !OTS.live;
       stepBtn.disabled = !S.algo || done() || !OTS.live;
       const s = sensorOf(S.cfg), sp = SPEEDS.find((x) => x.v === S.speed);
-      chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
+      if (!inPanel) chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
       clockN.textContent = String(S.recs.length).padStart(3, "0");
       clockT.textContent = "/" + (S.sess && !cfgChanged() ? S.sess.hops : S.cfg.hops);
       msg.classList.toggle("ctl-no", !!S.error);
@@ -864,12 +886,13 @@
     mount(root) {
       injectCss();
       const note = el("div");
-      const panel = el("aside", { class: "ctl-panel", "aria-label": "Control room settings" }), tx = el("div", { class: "card" });
+      const panel = el("aside", { class: "ctl-panel", "aria-label": "Control room settings" }), tx = el("div", { class: "ctl-txpanel" });
       const acc = el("div", { class: "card ctl-acc", "aria-label": "Next-hop prediction accuracy" });
       const hopLegendBox = el("div", { style: "min-height:26px" }), hopBox = el("div", { class: "ctl-hop" });
+      const scrubBox = el("div", { class: "ctl-scrub", "aria-label": "Scroll back through past hops" });
       const hopCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
         el("p", { class: "card-t" }, "Hop chart"),
-        el("p", { class: "card-k" }, "Rings are the system's calls, made before each hop"))), hopLegendBox, hopBox,
+        el("p", { class: "card-k" }, "Rings are the system's calls, made before each hop"))), hopLegendBox, hopBox, scrubBox,
         el("div", { class: "card-foot" }, "Top band: what the system thinks (faded until it locks). Bottom band: what the transmitter really runs. The system never sees the truth overlays."));
       const tlBox = el("div", { class: "ctl-tl" });
       const tlCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
@@ -888,7 +911,7 @@
       const tab = el("button", { class: "ctl-tab", onclick: () => setOpen(true), title: "Open settings (S)" }, "⚙ Settings");
       const backdrop = el("div", { class: "ctl-backdrop", onclick: () => setOpen(false) });
       const shell = el("div", { class: "ctl-shell" },
-        el("div", { class: "page ctl-page" }, note, tx, acc,
+        el("div", { class: "page ctl-page" }, note, acc,
           el("div", { class: "ctl-cols" }, el("div", { class: "ctl-col" }, hopCard, tlCard), el("div", { class: "ctl-col" }, sys, logCard)),
           tableCard),
         panel, backdrop, tab);
@@ -906,13 +929,35 @@
         hopLegend(hopLegendBox, renderHop(hopBox) || {});
         renderTimeline(tlBox);
       }
-      const updatePanel = makePanel(panel, () => setOpen(false)), updateTx = makeTx(tx, () => setOpen(true));
+      // Hop-chart scrubber: scroll back through past hops without stopping the run.
+      const scrubInput = el("input", { type: "range", min: 1, max: 1, step: 1, value: 1, "aria-label": "Scroll back through past hops" });
+      const scrubLatest = el("button", { class: "btn", title: "Jump back to the latest hop", "aria-label": "Jump to the latest hop" }, "⏭");
+      const scrubLabel = el("span", { class: "ctl-help" });
+      scrubBox.append(scrubLatest, scrubInput, scrubLabel);
+      scrubInput.addEventListener("input", () => {
+        const v = +scrubInput.value;
+        viewEnd = v >= S.recs.length ? null : v;     // at the end = resume following
+        renderCharts(); updateScrub();
+      });
+      scrubLatest.addEventListener("click", () => { viewEnd = null; renderCharts(); updateScrub(); });
+      function updateScrub() {
+        const t = S.recs.length, en = viewEnd != null ? clamp(viewEnd, 1, t) : t;
+        scrubInput.max = Math.max(1, t);
+        scrubInput.disabled = t < 2;
+        if (document.activeElement !== scrubInput) scrubInput.value = en;
+        scrubLatest.disabled = viewEnd == null || t < 2;
+        scrubLabel.textContent = !t ? "no hops yet"
+          : viewEnd != null ? `viewing up to hop ${en} of ${t} — paused`
+          : `following the latest hop (${t})`;
+      }
+      const updatePanel = makePanel(panel, () => setOpen(false)), updateTx = makeTx(tx, () => setOpen(true), true);
+      panel.prepend(tx);                              // the transmitter (algo select) lives in the side panel
       setOpen(panelOpen);
       ui = {
         render() {
           note.hidden = OTS.live;
           if (!OTS.live && !note.firstChild) note.append(offline());
-          updatePanel(); updateTx(); renderAcc(acc); renderCharts();
+          updatePanel(); updateTx(); renderAcc(acc); renderCharts(); updateScrub();
           renderSystem(sys); renderLog(logBox); renderTable(tableBox);
           const sw = S.recs.filter((r) => r.switch_detected).length;
           if (sw > lastSwitch) { sys.classList.remove("ctl-flash"); void sys.offsetWidth; sys.classList.add("ctl-flash"); }

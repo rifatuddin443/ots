@@ -11,6 +11,20 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-10-31 — Control room: scrubbable hop chart, transmitter in the side panel
+
+UI refinements to the Control room (`dashboard/views/control.js`):
+- **Scrub past hops.** A slider under the hop chart scrolls back through earlier
+  hops without stopping the run (`viewEnd` pins the window; `⏭` resumes
+  following). The chart draws up to the scrubbed hop; the live run keeps
+  recording underneath.
+- **Transmitter moved into the side panel.** The algorithm picker + transport now
+  live in the settings panel next to the sensor/jammer controls, freeing the main
+  column for the chart (the redundant settings chip is dropped in that layout).
+- **Jam tooltip clarified.** The per-hop `jam` line now reads "jam → next hop" and
+  shows whether the lit tones actually caught the following hop (✓/✗). The jam is
+  the plan for the *next* hop, not the current one, which the old label conflated.
+
 ## 2026-10-30 (latest) — Multiple transmit frequency: jam more channels when unsure
 
 Implements "transmit on several frequencies at once when the prediction is not
