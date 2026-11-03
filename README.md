@@ -165,6 +165,7 @@ the exp6/exp7 protocols with the same seeds.
 | `exp16_allocation` | thesis §6.3 / §7 | Multi-tone power allocation: spot↔barrage knapsack vs water-filling, and reactive/follower jamming vs dwell |
 | `exp17_feasibility` | thesis §10 | Feasibility map with the reactive-jamming region (dwell vs reaction latency, and window vs hop rate) |
 | `exp18_switch_tracking` | thesis §6.4 | Random switch plans over all 13 algorithms, per sensor (incl. perfect): switch detection rate/delay, false alarms, identification after each switch, dangerous locks |
+| `exp19_sequence_coverage` | thesis §4.2 | Every structured sequence type (arithmetic, polynomial, linear/nonlinear recurrence, lookup table, hybrids, noisy rule) and secrets far outside the recce ranges: top-1 and **hops to lock**, before vs after the structured experts |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -186,6 +187,21 @@ the exp6/exp7 protocols with the same seeds.
   universal predictor reaches **0.88 top-1** vs **0.42** for an identification-only
   bank — more than double — and stays far above it across the whole `P_d` sweep.
   This is the "if a new algorithm is used, still predict the next channel" result.
+
+### Structured sequence types (`exp19`)
+
+The default predictor (`prediction_expert_specs`) also carries three experts that
+cover the classic ways to build a hop sequence:
+
+| Expert | Covers | Locks after (perfect sensor) |
+| --- | --- | --- |
+| `rule_search` (`RuleSearchHypothesis`) | arithmetic progressions, polynomials (degree ≤ 5), affine recurrences (order ≤ 3), quadratic / bilinear / XOR / rotate rules, periodic lookup tables (period ≤ 64), table + drift and rule-switching hybrids, rules with random jumps | 3 hops (AP), ~d+3 (degree-d polynomial), P+1 (period-P table) |
+| `seed_beam_weak` / `seed_beam_lcg` (`SeedBeamHypothesis`) | weak-seed PRNG with any seed in 2^18; the truncated LCG with *any* seed of its modulus | ~log_M(keyspace) clean hops |
+| `bm_wide` (`AdaptiveBMHypothesis`) | LFSRs and other GF(2)-linear generators up to length 32 | ~(8/3)·L/b consecutive clean hops |
+
+What stays out of reach is reported, not hidden: keyed CSPRNGs (by design), and
+filtered LFSRs with an unknown high-degree filter or long registers under a lossy
+sensor (Berlekamp-Massey needs an unbroken clean run).
 
 ## The full thesis expert bank (beyond the conference slice)
 

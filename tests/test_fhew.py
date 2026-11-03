@@ -539,7 +539,7 @@ def test_dashboard_proof_textbook_bm_breaks_on_missed_hops():
 
 def test_dashboard_standalone_inlines_every_local_asset(tmp_path):
     from dashboard.build import write_standalone
-    out = write_standalone("window.OTS_DATA = null;\n", tmp_path / "page.html").read_text()
+    out = write_standalone("window.OTS_DATA = null;\n", tmp_path / "page.html").read_text(encoding="utf-8")
     assert 'src="' not in out.replace('src="https://', "")
     assert 'href="assets/' not in out
     assert "OTS.views.register" in out and "OTS.boot()" in out

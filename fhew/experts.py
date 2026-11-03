@@ -932,6 +932,515 @@ class LCGCryptanalysisHypothesis(Hypothesis):
         return 1
 
 
+# ------------------------------------------------- structured-sequence experts
+#
+# Three experts that close the gaps in the sequence-type coverage table:
+#
+# * RuleSearchHypothesis -- Bayesian program search over a library of rule
+#   families (affine / polynomial / bilinear / quadratic / bitwise recurrences
+#   and lag-P table rules). Covers arithmetic progressions, polynomial
+#   sequences, linear and nonlinear recurrences, periodic lookup tables and the
+#   hybrids built from them, in close to the minimum number of hops.
+# * SeedBeamHypothesis -- a pruned seed search over a *full* keyspace, so a
+#   weak-seed PRNG or a truncated LCG is still cracked when its secret is far
+#   outside the narrow recce range the enumeration experts cover.
+# * AdaptiveBMHypothesis -- Berlekamp-Massey that fires as soon as the clean run
+#   is long enough for the linear complexity it finds, so LFSRs (and any
+#   GF(2)-linear generator) up to length 32 are predicted, not just 5-7.
+
+
+def _coef_set(M: int, full_upto: int) -> np.ndarray:
+    """Every multiplier when ``M`` is small, else a small set of likely ones."""
+    if M <= full_upto:
+        return np.arange(M, dtype=np.int32)
+    return np.unique(np.array([0, 1, 2, 3, M - 1, M - 2, M - 3], dtype=np.int32) % M)
+
+
+def _grid(**axes) -> dict[str, np.ndarray]:
+    """Cartesian product of parameter axes, flattened to aligned 1-D arrays."""
+    names = list(axes)
+    mesh = np.meshgrid(*[np.asarray(axes[n], dtype=np.int32) for n in names], indexing="ij")
+    return {n: m.ravel() for n, m in zip(names, mesh)}
+
+
+def _known(*cs: np.ndarray) -> np.ndarray:
+    # channels are non-negative and "unknown" is -1, so the OR is negative iff
+    # any input is unknown
+    acc = cs[0]
+    for c in cs[1:]:
+        acc = acc | c
+    return acc >= 0
+
+
+@dataclass
+class RuleFamily:
+    """A vectorised family of hop rules ``c_t = f_theta(c_{t-1}, .., c_{t-W})``.
+
+    ``params`` holds aligned 1-D parameter arrays (one entry per rule) and
+    ``fn(get, params, M)`` returns every rule's next channel, or ``-1`` where a
+    channel it reads is still unknown; ``get(j)`` gives ``c_{t-j}`` per rule
+    (``j`` may be an array, for per-rule lags). ``width`` is the deepest lag read.
+    """
+
+    name: str
+    width: int
+    params: dict
+    fn: object
+
+    @property
+    def K(self) -> int:
+        return int(next(iter(self.params.values())).size)
+
+
+def _f_affine1(get, p, M):
+    c1 = get(1)
+    return np.where(c1 >= 0, (p["a"] * c1 + p["b"]) % M, -1)
+
+
+def _f_affine2(get, p, M):
+    c1, c2 = get(1), get(2)
+    return np.where(_known(c1, c2), (p["a1"] * c1 + p["a2"] * c2 + p["b"]) % M, -1)
+
+
+def _f_affine3(get, p, M):
+    c1, c2, c3 = get(1), get(2), get(3)
+    out = (p["a1"] * c1 + p["a2"] * c2 + p["a3"] * c3 + p["b"]) % M
+    return np.where(_known(c1, c2, c3), out, -1)
+
+
+def _f_poly(get, p, M):
+    # c_t = sum_i w_i c_{t-i}: the finite-difference rule of a degree-d polynomial
+    out = np.zeros(p["deg"].size, dtype=np.int32)
+    ok = np.ones(p["deg"].size, dtype=bool)
+    for i in range(1, _POLY_MAX_DEG + 2):
+        w = p[f"w{i}"]
+        ci = get(i)
+        use = w != 0
+        ok &= ~use | (ci >= 0)
+        out = out + w * ci
+    return np.where(ok, out % M, -1)
+
+
+def _f_lag(get, p, M):
+    c = get(p["lag"])
+    return np.where(c >= 0, (p["a"] * c + p["b"]) % M, -1)
+
+
+def _f_quad1(get, p, M):
+    c1 = get(1)
+    return np.where(c1 >= 0, (p["a"] * c1 * c1 + p["b"] * c1 + p["e"]) % M, -1)
+
+
+def _f_bilinear2(get, p, M):
+    c1, c2 = get(1), get(2)
+    out = (p["a"] * c1 * c2 + p["b"] * c1 + p["e"] * c2 + p["d"]) % M
+    return np.where(_known(c1, c2), out, -1)
+
+
+def _f_xor2(get, p, M):
+    c1, c2 = get(1), get(2)
+    return np.where(_known(c1, c2), (c1 ^ c2 ^ p["k"]) % M, -1)
+
+
+def _f_rotxor1(get, p, M):
+    c1 = get(1)
+    nb = M.bit_length() - 1
+    r = p["r"]
+    rot = ((c1 << r) | (c1 >> ((nb - r) % nb))) & (M - 1)
+    return np.where(c1 >= 0, rot ^ p["k"], -1)
+
+
+_POLY_MAX_DEG = 5
+
+
+def default_rule_library(M: int, max_lag: int = 64, heavy: bool = True) -> list[RuleFamily]:
+    """The rule families searched by :class:`RuleSearchHypothesis`.
+
+    Sized for ``M = 16`` at roughly 140k rules; for larger ``M`` the
+    multipliers of the higher-order families shrink to a small likely set so
+    the search stays tractable. ``heavy=False`` drops the two 65k-rule
+    families (order-3 affine, order-2 bilinear) for callers that run many
+    copies at once, such as the switch tracker's segments (~10k rules).
+    """
+    fams = [
+        RuleFamily("affine1", 1, _grid(a=_coef_set(M, 256), b=np.arange(M)), _f_affine1),
+        RuleFamily("affine2", 2, _grid(a1=_coef_set(M, 32), a2=_coef_set(M, 32), b=np.arange(M)),
+                   _f_affine2),
+        RuleFamily("quad1", 1, _grid(a=_coef_set(M, 32), b=_coef_set(M, 32), e=np.arange(M)),
+                   _f_quad1),
+    ]
+    if heavy:
+        fams += [
+            RuleFamily("affine3", 3, _grid(a1=_coef_set(M, 16), a2=_coef_set(M, 16),
+                                           a3=_coef_set(M, 16), b=np.arange(M)), _f_affine3),
+            RuleFamily("bilinear2", 2, _grid(a=_coef_set(M, 16), b=_coef_set(M, 16),
+                                             e=_coef_set(M, 16), d=np.arange(M)), _f_bilinear2),
+        ]
+    fams += [
+        RuleFamily("lag", int(max_lag),
+                   _grid(lag=np.arange(1, int(max_lag) + 1), a=np.ones(1),
+                         b=np.arange(M)), _f_lag),
+    ]
+    # finite-difference rules for polynomials of degree 0.._POLY_MAX_DEG
+    deg = np.arange(_POLY_MAX_DEG + 1)
+    poly = {"deg": deg}
+    for i in range(1, _POLY_MAX_DEG + 2):
+        poly[f"w{i}"] = np.array([((-1) ** (i + 1)) * math.comb(d + 1, i) if i <= d + 1 else 0
+                                  for d in deg], dtype=np.int32)
+    fams.append(RuleFamily("poly", _POLY_MAX_DEG + 1, poly, _f_poly))
+    if M & (M - 1) == 0 and M >= 4:          # bitwise rules need a power-of-two M
+        nb = M.bit_length() - 1
+        fams.append(RuleFamily("xor2", 2, {"k": np.arange(M, dtype=np.int32)}, _f_xor2))
+        fams.append(RuleFamily("rotxor1", 1, _grid(r=np.arange(nb), k=np.arange(M)), _f_rotxor1))
+    return fams
+
+
+class RuleSearchHypothesis(Hypothesis):
+    """Zero-shot Bayesian program search over hop rules (fastest structured lock).
+
+    Every rule of every family in the library (:func:`default_rule_library`) is
+    run in parallel. Each rule keeps its own short history of channels: a clean
+    slot writes the observed channel, any other slot writes the rule's own
+    prediction, so gaps are bridged exactly as in :class:`RecurrenceHypothesis`.
+    A rule that still needs an unseen channel (a lag-32 table rule after 10
+    hops) predicts uniformly instead of guessing, so it loses nothing while it
+    waits. Rules are scored through the sensor-aware emission and weighted by a
+    prior that gives every *family* the same mass (an Occam prior: a family
+    with 16 rules is not drowned by one with 65k), so the posterior is the
+    Bayes-optimal next-hop forecast for the library. That makes it lock in
+    close to the information-theoretic minimum (channels observed before every
+    later prediction is right, perfect sensor): three for an arithmetic
+    progression (two steps tell ``c + d`` apart from ``a c + b``), about
+    ``d + 3`` for a degree-``d`` polynomial, ``P + 1`` for a period-``P``
+    table.
+
+    **Re-sync.** When a clean channel is certain (no false alarms possible) a
+    rule that predicted something else re-syncs its history to it, so after a
+    random jump it predicts the next hop from where the emitter actually is.
+    When false alarms are possible a lone detection may be a ghost, so a rule
+    keeps its own prediction and lets the likelihood judge it, re-syncing only
+    when two clean hops in a row disagree with it.
+
+    **Pruning and restart.** A rule more than ``prune`` nats behind the best is
+    dropped, so after a few clean hops only the handful of consistent rules is
+    still evaluated. When the emitter changes rule (a hybrid or re-keyed hopper)
+    the survivors stop predicting the clean channels; ``restart_after``
+    surprises with no confident hit in between, after the search had locked,
+    re-open the whole library seeded from the channels since the first
+    surprise, so the new rule is found in a few hops. A lone surprise (a random
+    jump, a ghost) followed by a hit does not.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, max_lag: int = 64,
+                 prune: float = 18.0, families: list[RuleFamily] | None = None,
+                 heavy: bool = True,
+                 restart_after: int = 2, surprise_p: float = 1e-3):
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self.prune = float(prune)
+        self.restart_after = int(restart_after)
+        self.surprise_p = float(surprise_p)
+        self.families = (families if families is not None
+                         else default_rule_library(self.M, max_lag, heavy=heavy))
+        F = len(self.families)
+        self._log_prior = [-np.log(F) - np.log(f.K) for f in self.families]
+        self._width = max(f.width for f in self.families)
+        self.K = sum(f.K for f in self.families)
+        self.reset()
+
+    # ------------------------------------------------------------------ state
+    def reset(self) -> None:
+        self.t = 0
+        self._obs: list[int] = []          # observed clean channel per slot, -1 if none
+        self._streak = 0                   # surprises since the last confident hit
+        self._streak_start = 0             # slot of the first surprise in that run
+        self._hits = 0                     # confident hits since the last restart
+        self._certain = False
+        self.restarts = 0
+        self._restart()
+
+    def forget(self, retain: float = 0.0) -> None:
+        # an external regime alarm: the old channels belong to the old rule
+        if retain < 1.0:
+            self._restart(since=self.t)
+
+    def _restart(self, since: int = 0, carry: bool = False) -> None:
+        """Re-open every rule, seeding its history from the channels seen since ``since``.
+
+        Only post-switch channels are used: a lag rule that reached back across
+        the switch would be refuted by the *old* rule's channels and pruned
+        before its own period came round. With ``carry`` the current survivors
+        are kept alongside the fresh library, with their own histories and half
+        the mass: if the surprises were sensor noise (a ghost, a jump) the old
+        lock simply carries on, and if the emitter really switched the data
+        refutes it within a hop or two.
+        """
+        old = (self._params, self._hist, self._lw, self._miss) if carry else None
+        self._params, self._hist, self._lw, self._miss = [], [], [], []
+        recent = self._obs[since:][-self._width:]
+        for f, lp in zip(self.families, self._log_prior):
+            h = np.full((f.K, f.width), -1, dtype=np.int32)
+            for j in range(1, min(f.width, len(recent)) + 1):
+                h[:, (self.t - j) % f.width] = recent[-j]
+            self._params.append(dict(f.params))
+            self._hist.append(h)
+            self._lw.append(np.full(f.K, lp))
+            self._miss.append(np.zeros(f.K, dtype=bool))
+        if old is not None:
+            self._normalise()
+            z_old = float(logsumexp([logsumexp(lw) for lw in old[2] if lw.size]))
+            for i, (p, h, lw, miss) in enumerate(zip(*old)):
+                self._lw[i] += np.log(0.5)
+                if not lw.size:
+                    continue
+                self._params[i] = {k: np.concatenate([v, p[k]]) for k, v in self._params[i].items()}
+                self._hist[i] = np.concatenate([self._hist[i], h])
+                self._miss[i] = np.concatenate([self._miss[i], miss])
+                self._lw[i] = np.concatenate([self._lw[i], lw - z_old + np.log(0.5)])
+        self._normalise()
+        self._cur = self._predict_all()
+        self._last_predict = self._mix()
+
+    def _normalise(self) -> float:
+        z = float(logsumexp([logsumexp(lw) for lw in self._lw if lw.size]))
+        for lw in self._lw:
+            lw -= z
+        return z
+
+    def _predict_all(self) -> list[np.ndarray]:
+        out = []
+        t = self.t
+        for f, p, h in zip(self.families, self._params, self._hist):
+            W = f.width
+            rows = np.arange(h.shape[0])
+
+            def get(j, h=h, rows=rows, W=W):
+                if np.isscalar(j):
+                    return h[:, (t - int(j)) % W]
+                return h[rows, (t - j) % W]
+
+            out.append(f.fn(get, p, self.M) if h.shape[0] else np.empty(0, dtype=np.int32))
+        return out
+
+    def _mix(self) -> np.ndarray:
+        dist = np.full(self.M, 1e-12)
+        for cur, lw in zip(self._cur, self._lw):
+            if not cur.size:
+                continue
+            w = np.exp(lw)
+            known = cur >= 0
+            dist += np.bincount(cur[known], weights=w[known], minlength=self.M)
+            dist += float(w[~known].sum()) / self.M
+        return dist / dist.sum()
+
+    # ------------------------------------------------------------- hypothesis
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        # A deterministic rule's likelihood is one of only M + 1 values (the
+        # emission of the channel it names, or the uniform average while it is
+        # still waiting), so index a short table: -1 (unknown) picks the tail.
+        unknown_ll = float(logsumexp(log_emission) - np.log(self.M))
+        ll_ext = np.append(log_emission, unknown_ll)
+        # a lone detection is certain when no other channel could explain it
+        # (P_fa = 0 puts every other channel ~20 nats down; P_fa > 0 only ~6)
+        top2 = np.partition(log_emission, -2)[-2:]
+        self._certain = bool(top2[1] - top2[0] > 12.0)
+        for cur, lw in zip(self._cur, self._lw):
+            lw += ll_ext[cur]
+        loglik = self._normalise()
+        best = max(float(lw.max()) for lw in self._lw if lw.size)
+        for i, lw in enumerate(self._lw):
+            keep = lw >= best - self.prune
+            if not keep.all():
+                self._params[i] = {k: v[keep] for k, v in self._params[i].items()}
+                self._hist[i] = self._hist[i][keep]
+                self._miss[i] = self._miss[i][keep]
+                self._lw[i] = lw[keep]
+                self._cur[i] = self._cur[i][keep]
+        return StepResult(loglik=loglik, predict_next=self._last_predict)
+
+    def observe_clean(self, channel: int | None) -> None:
+        self._obs.append(-1 if channel is None else int(channel))
+        if channel is not None:
+            p = float(self._last_predict[int(channel)])
+            if p < self.surprise_p:
+                if self._streak == 0:
+                    self._streak_start = self.t
+                self._streak += 1
+            elif p >= 0.5:
+                self._streak = 0
+                self._hits += 1
+        for i, (f, h, cur) in enumerate(zip(self.families, self._hist, self._cur)):
+            if channel is None:
+                h[:, self.t % f.width] = cur
+            elif self._certain:
+                h[:, self.t % f.width] = channel
+            else:
+                # one disagreement may be a ghost: keep the rule's own channel;
+                # a second in a row means the emitter really jumped: re-sync
+                miss = (cur >= 0) & (cur != channel)
+                h[:, self.t % f.width] = np.where((cur < 0) | (miss & self._miss[i]), channel, cur)
+                self._miss[i] = miss
+        self.t += 1
+        # Restart only once the search had locked (a run of surprises while it
+        # is still learning just means it has not found the rule yet), with a
+        # long surprise run as the fallback so it can never stay stuck.
+        if self._streak >= self.restart_after and (self._hits >= 2 or self._streak >= 4):
+            self._streak = self._hits = 0
+            self.restarts += 1
+            self._restart(since=self._streak_start, carry=True)
+            return
+        self._cur = self._predict_all()
+        self._last_predict = self._mix()
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return int(sum(lw.size for lw in self._lw))
+
+    def family_posterior(self) -> dict[str, float]:
+        """Posterior mass per rule family (diagnostic: *which kind* of rule)."""
+        return {f.name: float(np.exp(lw).sum()) for f, lw in zip(self.families, self._lw)}
+
+    def map_rule(self) -> tuple[str, dict]:
+        """The single most probable surviving rule, as ``(family, params)``."""
+        i = max((k for k in range(len(self._lw)) if self._lw[k].size),
+                key=lambda k: float(self._lw[k].max()))
+        j = int(np.argmax(self._lw[i]))
+        return self.families[i].name, {n: int(v[j]) for n, v in self._params[i].items()}
+
+
+def _splitmix64_vec(x: np.ndarray) -> np.ndarray:
+    """Vectorised :func:`fhew.generators._splitmix64` over ``uint64`` arrays."""
+    with np.errstate(over="ignore"):
+        x = x + np.uint64(0x9E3779B97F4A7C15)
+        z = (x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+        z = (z ^ (z >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+        return z ^ (z >> np.uint64(31))
+
+
+class SeedBeamHypothesis(Hypothesis):
+    """Pruned seed search over a whole keyspace (weak-seed PRNG or truncated LCG).
+
+    The enumeration experts precompute a trajectory per candidate secret, which
+    caps them at a few thousand seeds. This expert instead keeps the live
+    candidates as arrays, scores each through the sensor-aware emission, and
+    drops any whose log-weight falls more than ``prune`` nats behind the best.
+    A clean slot leaves about ``1/M`` of the candidates, so even ``2**18`` seeds
+    collapse to one in about ``log_M(keyspace)`` clean hops -- the minimum the
+    information allows -- while a lone false alarm costs the true seed only a
+    few nats, far inside the pruning margin.
+
+    ``family="weak_seed"`` attacks :class:`~fhew.generators.WeakSeedGenerator`
+    with seeds in ``[0, keyspace)``; ``family="lcg"`` attacks the default
+    :class:`~fhew.generators.LCGGenerator` over *every* seed of its modulus.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, family: str = "weak_seed",
+                 keyspace: int = 2 ** 18, prune: float = 25.0):
+        if family not in ("weak_seed", "lcg"):
+            raise ValueError(f"unknown seed-beam family '{family}'")
+        self.label = label
+        self.channels = channels
+        self.M = channels.size
+        self.family = family
+        self.prune = float(prune)
+        if family == "lcg":
+            from fhew.generators import LCGGenerator
+            g = LCGGenerator.create(self.M, np.random.default_rng(0), seed=0)
+            self._m, self._a, self._c, self._shift = g.m, g.a, g.c, g.shift
+            keyspace = g.m
+        self.keyspace = int(keyspace)
+        self.reset()
+
+    def reset(self) -> None:
+        self.t = 0
+        self._state = np.arange(self.keyspace, dtype=np.uint64 if self.family == "weak_seed" else np.int64)
+        self.log_w = np.full(self.keyspace, -np.log(self.keyspace))
+        self._next = self._channels_at(0, self._state)     # every candidate's channel this slot
+        self._last_predict = self.channels.uniform()
+
+    def _channels_at(self, t: int, state: np.ndarray) -> np.ndarray:
+        if self.family == "weak_seed":
+            v = _splitmix64_vec((state << np.uint64(20)) ^ np.uint64(t))
+            return (v % np.uint64(self.M)).astype(np.int64)
+        nxt = (self._a * state + self._c) % self._m
+        return (nxt >> self._shift) % self.M
+
+    def step(self, log_emission: np.ndarray) -> StepResult:
+        a = self.log_w + log_emission[self._next]
+        loglik = float(logsumexp(a))
+        a -= loglik
+        keep = a >= a.max() - self.prune
+        if not keep.all():
+            self._state, a = self._state[keep], a[keep]
+        self.log_w = a - logsumexp(a)
+        if self.family == "lcg":
+            self._state = (self._a * self._state + self._c) % self._m
+        self.t += 1
+        self._next = self._channels_at(self.t, self._state)
+        dist = np.bincount(self._next, weights=np.exp(self.log_w), minlength=self.M) + 1e-12
+        self._last_predict = dist / dist.sum()
+        return StepResult(loglik=loglik, predict_next=self._last_predict)
+
+    def predict_next(self) -> np.ndarray:
+        return self._last_predict
+
+    @property
+    def n_particles(self) -> int:
+        return int(self.log_w.size)
+
+
+class AdaptiveBMHypothesis(AlgebraicLFSRHypothesis):
+    """Berlekamp-Massey that adapts its window to the linear complexity it finds.
+
+    The plain BM expert waits for a fixed ``2 * max_length + 4`` clean slots.
+    This one tries recovery on the current clean run from ``min_run`` slots on
+    (using at most the last ``~(8/3) * max_length`` bits), so a length-``L``
+    register is predicted after about ``(8/3) L / b`` clean hops -- 11 hops for
+    ``L = 16`` at 16 channels -- and a long register is still covered. A
+    recovered recurrence that two clean slots contradict is dropped and the
+    search restarts, so a spurious fit on random data cannot stick.
+    """
+
+    def __init__(self, label: str, channels: ChannelSet, max_length: int = 32,
+                 min_run: int = 8):
+        super().__init__(label, channels, max_length=max_length, min_run=min_run)
+        self.max_window = math.ceil(8 * self.max_length / (3 * self.b)) + 2
+
+    def reset(self) -> None:
+        super().reset()
+        self._run: list[int] = []
+        self._misses = 0
+
+    def observe_clean(self, channel: int | None) -> None:
+        slot = self.t - 1
+        if channel is None:
+            self._run = []
+            return
+        ch = int(channel)
+        if self._recovered:
+            if self._channel_at(slot) == ch:
+                self._misses = 0
+                return
+            self._misses += 1
+            if self._misses < 2:
+                return
+            self._recovered, self._misses, self._run = False, 0, []
+        self._run.append(ch)
+        if len(self._run) < self.min_run:
+            return
+        window = self._run[-self.max_window:]
+        res = recover_and_predict(window, b=self.b, horizon=1, max_length=self.max_length)
+        if res.recovered:
+            self._coeffs, self._L = res.coeffs, res.length
+            self._s = slot - len(window) + 1
+            self._bits = [int(x) for x in channels_to_bits(np.asarray(window), self.b)]
+            self._recovered = True
+
+
 # ----------------------------------------------------------------- spec / build
 @dataclass
 class HypothesisSpec:
@@ -1066,6 +1575,20 @@ def build_hypothesis(spec: HypothesisSpec, channels: ChannelSet, horizon: int,
                                              k=spec.options.get("k", 8))
     if spec.kind == "recurrence":
         return RecurrenceHypothesis(spec.label, channels)
+    if spec.kind == "rule_search":
+        return RuleSearchHypothesis(spec.label, channels,
+                                    max_lag=spec.options.get("max_lag", 64),
+                                    prune=spec.options.get("prune", 18.0),
+                                    heavy=spec.options.get("heavy", True))
+    if spec.kind == "seed_beam":
+        return SeedBeamHypothesis(spec.label, channels,
+                                  family=spec.options.get("family", "weak_seed"),
+                                  keyspace=spec.options.get("keyspace", 2 ** 18),
+                                  prune=spec.options.get("prune", 25.0))
+    if spec.kind == "bm_adaptive":
+        return AdaptiveBMHypothesis(spec.label, channels,
+                                    max_length=spec.options.get("max_length", 32),
+                                    min_run=spec.options.get("min_run", 8))
     if spec.kind == "behaviour":
         return BehaviourHypothesis(spec.label, channels,
                                    decay=spec.options.get("decay", 0.9))

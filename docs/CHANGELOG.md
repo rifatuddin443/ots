@@ -37,6 +37,44 @@ Checks: all 131 tests pass; a headless browser run confirmed pause stops the
 hop counter, Space resumes, switching while paused stays paused, and every
 sampled unsure call (top-1 under 90%) shows 2–3 channels.
 
+## 2026-11-03 — Structured sequence coverage: rule search, seed beam, wide BM
+
+Closes the gaps in which hop-sequence types the predictor covers, aiming at the
+fewest hops to lock. Results: [`methodology_and_results.md` §5.18](methodology_and_results.md).
+
+### Generators (`fhew/generators.py`)
+- `arithmetic`, `polynomial`, `linear_rec` (order-k affine), `nonlinear_rec`
+  (bilinear order 2), `lookup_table`, `hybrid_sum` (table + drift),
+  `hybrid_switch` (rule changes every `segment` hops), `noisy_rule` (affine rule
+  with random jumps). `_PRIMITIVE_TAPS` gains a 16-bit polynomial.
+
+### Experts (`fhew/experts.py`)
+- `RuleSearchHypothesis` + `default_rule_library` — Bayesian program search over
+  vectorised rule families (affine order 1–3, poly finite differences, quadratic,
+  bilinear, XOR, rotate-XOR, lag-P tables), Occam family prior, pruning,
+  restart-with-carry on rule switches, ghost-aware re-sync. `heavy=False` gives a
+  ~10k-rule library.
+- `SeedBeamHypothesis` — pruned full-keyspace seed search (`weak_seed`, `lcg`).
+- `AdaptiveBMHypothesis` — Berlekamp-Massey with an adaptive window (LFSRs to
+  length 32), drops a fit after two contradictions.
+- `build_hypothesis` kinds: `rule_search`, `seed_beam`, `bm_adaptive`.
+
+### Wiring
+- `prediction_expert_specs(..., structured=True)` adds the four experts (BM only
+  for power-of-two `M`); `structured=False` restores the old set.
+- The switch tracker's universal experts swap `recurrence` for the light
+  `rule_search` (shared read-only tables across segments).
+- `STRUCTURED_GENERATORS`, target-family maps updated.
+
+### Experiment & tests
+- `exp19_sequence_coverage` (registered in `scripts/run_all.py`).
+- `tests/test_sequences.py` (23 tests: generator laws, lock-hop budgets,
+  lossy-sensor accuracy, rule-switch re-lock, CSPRNG humility, seed beam, BM).
+- Fixed a Windows-only failure in
+  `test_dashboard_standalone_inlines_every_local_asset` (read the page as UTF-8).
+
+**Not re-run:** exp14/exp15/exp18 figures still show the pre-change predictor.
+
 ## 2026-10-31 — Control room: scrubbable hop chart, transmitter in the side panel
 
 UI refinements to the Control room (`dashboard/views/control.js`):

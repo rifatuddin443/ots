@@ -64,6 +64,7 @@ from fhew.experts import (
     HypothesisBank,
     HypothesisSpec,
     MixtureHMMHypothesis,
+    RuleSearchHypothesis,
     build_hypothesis,
 )
 from fhew.likelihood import SensorAwareEmission
@@ -94,9 +95,11 @@ def universal_specs(max_order: int = 4) -> list[HypothesisSpec]:
     """The zero-shot experts that predict generators the bank has no expert for.
 
     Context mixing (any in-context regularity), the phase-space predictor
-    (unseen low-dimensional dynamics) and the modular linear-recurrence learner
-    (affine order-<=2 rules, which it pins down in a few hops where context
-    mixing must first see every context). None of them names a generator, so
+    (unseen low-dimensional dynamics) and the rule search (arithmetic steps,
+    affine / quadratic / polynomial / bitwise recurrences and lookup tables up
+    to period 32, which it pins down in a few hops where context mixing must
+    first see every context). The tracker runs the light rule library because
+    every segment carries its own copy. None of them names a generator, so
     identification is unchanged; they make the next-hop prediction re-converge
     faster after a switch.
     """
@@ -104,7 +107,8 @@ def universal_specs(max_order: int = 4) -> list[HypothesisSpec]:
         HypothesisSpec("context_mixing", "markov", "context_mixing",
                        options={"max_order": max_order}),
         HypothesisSpec("phase_space", "logistic", "phase_space"),
-        HypothesisSpec("recurrence", "lagged_fib", "recurrence"),
+        HypothesisSpec("rule_search", "structured", "rule_search",
+                       options={"heavy": False, "max_lag": 32}),
     ]
 
 
@@ -448,6 +452,14 @@ def _readonly_memo(hypotheses) -> dict:
             share(h._filter._log_w0)
             if h.candidate_labels is not None:
                 share(h.candidate_labels)
+        elif isinstance(h, RuleSearchHypothesis):
+            # the rule parameter grids are never written (pruning rebinds them)
+            share(h.families)
+            for f in h.families:
+                share(f)
+                share(f.params)
+                for v in f.params.values():
+                    share(v)
         elif isinstance(h, MixtureHMMHypothesis):
             share(h._T)
             for T in h._T:

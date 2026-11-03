@@ -105,7 +105,9 @@ def full_bank_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
 
 def prediction_expert_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
                             weak_keyspace=256, lcg_seed_max=1024,
-                            max_order: int = 4) -> list[HypothesisSpec]:
+                            max_order: int = 4, structured: bool = True,
+                            beam_keyspace: int = 2 ** 18,
+                            max_lag: int = 64) -> list[HypothesisSpec]:
     """Experts for the Fixed-Share **next-channel predictor** (thesis §4.2).
 
     The identification experts (one per known family) plus a *zero-shot universal
@@ -116,6 +118,13 @@ def prediction_expert_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
     (including higher-order rules a first-order Markov expert misses), `phase_space`
     carries unseen chaotic dynamics, and `barrage` is the uniform floor for the
     genuinely unpredictable (keyed CSPRNG).
+
+    With ``structured=True`` (the default) three experts widen coverage to the
+    structured sequence types: `rule_search` (arithmetic, polynomial, linear /
+    nonlinear recurrences, lookup tables up to period ``max_lag`` and their
+    hybrids), `seed_beam_*` (weak-seed and truncated-LCG secrets anywhere in a
+    ``beam_keyspace`` / full-modulus keyspace) and `bm_wide` (LFSRs and other
+    GF(2)-linear generators up to length 32).
     """
     specs = identification_bank_specs(
         n_channels, lfsr_lengths=lfsr_lengths, weak_keyspace=weak_keyspace,
@@ -124,8 +133,19 @@ def prediction_expert_specs(n_channels: int, *, lfsr_lengths=(5, 6, 7),
         HypothesisSpec("context_mixing", "markov", "context_mixing",
                        options={"max_order": max_order}),
         HypothesisSpec("phase_space", "logistic", "phase_space"),
-        HypothesisSpec("barrage", "none", "barrage"),
     ]
+    if structured:
+        specs += [
+            HypothesisSpec("rule_search", "structured", "rule_search",
+                           options={"max_lag": max_lag}),
+            HypothesisSpec("seed_beam_weak", "weak_seed", "seed_beam",
+                           options={"family": "weak_seed", "keyspace": beam_keyspace}),
+            HypothesisSpec("seed_beam_lcg", "lcg", "seed_beam", options={"family": "lcg"}),
+        ]
+        if n_channels & (n_channels - 1) == 0:      # BM reads channel bits
+            specs.append(HypothesisSpec("bm_wide", "lfsr", "bm_adaptive",
+                                        options={"max_length": 32}))
+    specs.append(HypothesisSpec("barrage", "none", "barrage"))
     return specs
 
 
@@ -138,6 +158,8 @@ EXPERT_TARGET_FAMILY = {
     "weak_seed": "weak_seed", "seed_search": "weak_seed",
     "chaos": "chaos", "chaos_id": "chaos", "phase_space": "chaos",
     "markov": "markov", "context_mixing": "markov", "behaviour": "markov",
+    "rule_search": "structured", "seed_beam_weak": "weak_seed",
+    "seed_beam_lcg": "lcg", "bm_wide": "lfsr",
     "barrage": "unknown", "H0": "unknown",
 }
 
@@ -150,11 +172,19 @@ GENERATOR_TARGET_FAMILY = {
     # "new algorithm" families: no dedicated expert, so identification routes to
     # unknown; they exist to test next-channel *prediction*, not identification.
     "lagged_fib": "unknown", "quadratic_cg": "unknown", "sine_map": "unknown",
+    # structured sequence families: predicted by rule search, not identified
+    "arithmetic": "structured", "polynomial": "structured", "linear_rec": "structured",
+    "nonlinear_rec": "structured", "lookup_table": "structured",
+    "hybrid_sum": "structured", "hybrid_switch": "structured", "noisy_rule": "structured",
 }
 
 #: "new algorithm" generators held out of every bank, used by the prediction
 #: benchmark to show the universal predictor generalises beyond the bank.
 NEW_ALGORITHM_GENERATORS = ("lagged_fib", "quadratic_cg", "sine_map")
+
+#: structured sequence families covered by the rule-search expert (exp19)
+STRUCTURED_GENERATORS = ("arithmetic", "polynomial", "linear_rec", "nonlinear_rec",
+                         "lookup_table", "hybrid_sum", "hybrid_switch", "noisy_rule")
 
 
 def specs_from_list(items: list[dict]) -> list[HypothesisSpec]:

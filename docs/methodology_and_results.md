@@ -760,6 +760,53 @@ breakable generator) is the classic partition into exact-recovery, short-horizon
 prediction and barrage. The map's thresholds match the mechanisms the simulated
 experiments measure.
 
+### 5.18 Sequence-type coverage and hops to lock — `exp19_sequence_coverage.png`
+
+![exp19_sequence_coverage.png](figures/exp19_sequence_coverage.png)
+
+*8 seeds, `T = 120`, `M = 16`, steady-state top-1 over the final 40 slots; "lock"
+= median observed slots after which the next five predictions are all right.
+"Before" is `prediction_expert_specs(structured=False)`, "after" adds
+`rule_search`, `seed_beam_weak`, `seed_beam_lcg` and `bm_wide`.*
+
+| type | top-1 before → after (`P_d .95, P_fa 0`) | lock after | top-1 before → after (`P_d .85, P_fa .02`) | lock after |
+| --- | --- | --- | --- | --- |
+| arithmetic | 0.98 → **1.00** | 4 | 0.86 → **0.99** | 6 |
+| polynomial (deg 2) | 0.93 → **1.00** | 5 | 0.62 → **1.00** | 9 |
+| linear recurrence (order 3) | 0.72 → **1.00** | 7.5 | 0.42 → **0.98** | 14 |
+| nonlinear recurrence (bilinear) | 0.86 → **1.00** | 6.5 | 0.66 → **0.99** | 11 |
+| lookup table (period 8–32) | 0.86 → **1.00** | 22.5 | 0.40 → **0.95** | 36.5 |
+| hybrid: table + drift | 0.37 → **1.00** | 28.5 | 0.10 → **0.92** | 38 |
+| hybrid: rule switch every 40 | 0.50 → **0.84** | 7 | 0.27 → **0.71** | 12.5 |
+| noisy rule (10 % random jumps) | 0.84 → **0.87** | 14.5 | 0.62 → **0.72** | 13.5 |
+| weak seed, keyspace 2^18 | 0.07 → **1.00** | 5 | 0.07 → **1.00** | 7 |
+| LCG, any seed | 0.20 → **1.00** | 4 | 0.18 → **1.00** | 6 |
+| LFSR, length 16 | 0.06 → **1.00** | 15.5 | 0.04 → 0.12 | 61 |
+| keyed CSPRNG (control) | 0.06 → 0.07 | never | 0.06 → 0.07 | never |
+
+**Every structured type is now predicted at or near its ceiling.** The rule search
+is a Bayesian program search over ~140k vectorised rules with an Occam
+(equal-mass-per-family) prior, so it locks close to the information minimum: a
+period-`P` table cannot be predicted before one period has been seen, and it
+locks right after (`P + 1` on a perfect sensor). Refuted rules are pruned, so
+after a few hops only the consistent handful is still evaluated; the per-hop
+cost falls from the full library to almost nothing. The hybrids show the restart
+logic: after a rule switch the old survivors are carried at half mass next to a
+re-opened library seeded only with post-switch channels (old channels would
+refute the new table rule before its period came round), and it re-locks in a
+handful of hops. The noisy rule is bounded by its own entropy (≈ 0.9 at
+`P_d = 0.95`); under false alarms a lone mismatch could be a ghost, so a rule
+re-syncs only after two disagreeing clean hops in a row.
+
+**Secrets outside the recce range.** The seed beam keeps 2^18 weak-seed
+candidates (or all 2^16 LCG seeds) as arrays and prunes those > 25 nats behind,
+so a clean hop removes ~15/16 of them: lock in 5–7 hops where the narrow
+enumeration expert never locks. **Limits, reported:** the 16-bit LFSR needs
+~11 *consecutive* clean hops for Berlekamp-Massey, which a lossy sensor rarely
+delivers (0.12 at `P_d = 0.85`); a keyed CSPRNG stays at chance, as it must. The
+"before" lock numbers for `lcg_any_seed` and harsh `linear_rec` are lucky
+five-hit runs, not real locks (their top-1 is 0.2–0.4).
+
 ---
 
 ## 6. Discussion of observed behaviour

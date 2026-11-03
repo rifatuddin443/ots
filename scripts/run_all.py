@@ -35,6 +35,7 @@ from experiments import (
     exp16_allocation,
     exp17_feasibility,
     exp18_switch_tracking,
+    exp19_sequence_coverage,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -60,6 +61,7 @@ EXPERIMENTS = {
     "exp16": exp16_allocation,
     "exp17": exp17_feasibility,
     "exp18": exp18_switch_tracking,
+    "exp19": exp19_sequence_coverage,
 }
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
@@ -163,6 +165,10 @@ def _headline(name: str, r: dict) -> dict:
             return {k: {f: v[f] for f in ("detect_rate", "delay_median", "false_alarms_per_100_hops",
                                           "final_exact", "final_soft", "dangerous_locks_per_regime")}
                     for k, v in r["sensors"].items()}
+        if name == "exp19":
+            return {k: {g: {"before": round(d["before_top1"], 3), "after": round(d["after_top1"], 3),
+                            "lock_after": d["after_lock"]} for g, d in per.items()}
+                    for k, per in r["sensors"].items()}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}

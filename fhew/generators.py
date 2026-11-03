@@ -127,6 +127,7 @@ _PRIMITIVE_TAPS = {
     10: 0b1000000100,
     11: 0b10000000010,
     12: 0b100000101001,
+    16: 0b110100000000001,
 }
 
 
@@ -800,3 +801,385 @@ class SineMapGenerator(Generator):
 
     def describe(self) -> dict:
         return {"name": self.name, "n_channels": self.n_channels, "r": self.r}
+
+
+# ---- structured sequence families (arithmetic, polynomial, recurrences, tables, hybrids) ----
+#
+# Each family below is a textbook way to build a hop sequence that the original
+# bank had no dedicated expert for. They are the test set for the rule-search
+# predictor (`fhew.experts.RuleSearchHypothesis`).
+
+
+def _lively(seq, n_channels: int, min_distinct: int = 4) -> bool:
+    """True if a drawn sequence visits enough channels to be a real hopper.
+
+    Random affine / bilinear coefficients sometimes collapse onto a fixed point
+    or a 2-cycle; such draws are rejected so the test set is not trivially easy.
+    """
+    return len(set(int(c) for c in seq)) >= min(min_distinct, n_channels)
+
+
+@register("arithmetic")
+class ArithmeticProgressionGenerator(Generator):
+    """Arithmetic progression ``c_t = (c_0 + d*t) mod M``.
+
+    The simplest structured hopper (constant channel step). It is an order-1
+    affine recurrence ``c_t = c_{t-1} + d``, so two clean hops pin it down.
+    """
+
+    def __init__(self, n_channels: int, start: int, step: int):
+        super().__init__(n_channels)
+        self._start = int(start) % n_channels
+        self.step = int(step) % n_channels
+        self.c = self._start
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               start: int | None = None, step: int | None = None):
+        rng = rng or np.random.default_rng()
+        if start is None:
+            start = int(rng.integers(0, n_channels))
+        if step is None:
+            step = int(rng.integers(1, n_channels))
+        return cls(n_channels=n_channels, start=start, step=step)
+
+    def reset(self) -> None:
+        self.c = self._start
+
+    def next_channel(self) -> int:
+        self.c = (self.c + self.step) % self.n_channels
+        return self.c
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "step": self.step}
+
+
+@register("polynomial")
+class PolynomialGenerator(Generator):
+    """Polynomial sequence ``c_t = p(t + t_0) mod M`` of a given degree.
+
+    A degree-``d`` polynomial has a vanishing ``(d+1)``-th finite difference, so
+    it obeys the fixed linear recurrence
+    ``c_t = sum_{i=1}^{d+1} (-1)^{i+1} C(d+1, i) c_{t-i}`` whatever its
+    coefficients: ``d + 2`` clean hops are enough to predict it.
+    """
+
+    def __init__(self, n_channels: int, coeffs: tuple[int, ...], t0: int):
+        super().__init__(n_channels)
+        self.coeffs = tuple(int(a) % n_channels for a in coeffs)
+        self._t0 = int(t0)
+        self.t = self._t0
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               degree: int = 2, coeffs: tuple[int, ...] | None = None, t0: int | None = None):
+        rng = rng or np.random.default_rng()
+        if t0 is None:
+            t0 = int(rng.integers(0, 10_000))
+        if coeffs is None:
+            for _ in range(64):
+                coeffs = tuple(int(rng.integers(0, n_channels)) for _ in range(int(degree) + 1))
+                if coeffs[-1] == 0:
+                    continue
+                if _lively(cls(n_channels, coeffs, t0).sequence(48), n_channels):
+                    break
+        return cls(n_channels=n_channels, coeffs=coeffs, t0=t0)
+
+    def reset(self) -> None:
+        self.t = self._t0
+
+    def next_channel(self) -> int:
+        self.t += 1
+        v = 0
+        for a in reversed(self.coeffs):      # Horner; coeffs[k] multiplies t**k
+            v = (v * self.t + a) % self.n_channels
+        return v
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels,
+                "degree": len(self.coeffs) - 1}
+
+
+class _RecurrenceGenerator(Generator):
+    """Shared state handling for generators driven by the last few channels."""
+
+    order = 1
+
+    def __init__(self, n_channels: int, seed_state: tuple[int, ...]):
+        super().__init__(n_channels)
+        if len(seed_state) != self.order:
+            raise ValueError(f"seed_state needs {self.order} channels")
+        self._seed = tuple(int(s) % n_channels for s in seed_state)
+        self.hist = list(self._seed)
+
+    def reset(self) -> None:
+        self.hist = list(self._seed)
+
+    def _rule(self, hist: list[int]) -> int:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def next_channel(self) -> int:
+        c = int(self._rule(self.hist)) % self.n_channels
+        self.hist = (self.hist + [c])[-self.order:]
+        return c
+
+    @staticmethod
+    def _draw_lively(n_channels, make):
+        """Redraw ``make()`` until the generator is not a short degenerate cycle."""
+        g = make()
+        for _ in range(200):
+            if _lively(g.sequence(64), n_channels, min_distinct=6):
+                break
+            g = make()
+        g.reset()
+        return g
+
+
+@register("linear_rec")
+class LinearRecurrenceGenerator(_RecurrenceGenerator):
+    """Affine linear recurrence ``c_t = a_1 c_{t-1} + .. + a_k c_{t-k} + b (mod M)``.
+
+    The default order 3 (a "tribonacci-style" generator) is beyond the order-2
+    rules of the original recurrence expert and needs order-3 contexts that the
+    context-mixing learner sees only rarely in a short window.
+    """
+
+    def __init__(self, n_channels: int, coeffs: tuple[int, ...], offset: int,
+                 seed_state: tuple[int, ...]):
+        self.order = len(coeffs)
+        super().__init__(n_channels, seed_state)
+        self.coeffs = tuple(int(a) % n_channels for a in coeffs)
+        self.offset = int(offset) % n_channels
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               order: int = 3, coeffs: tuple[int, ...] | None = None,
+               offset: int | None = None, seed_state: tuple[int, ...] | None = None):
+        rng = rng or np.random.default_rng()
+        k = len(coeffs) if coeffs is not None else int(order)
+
+        def make():
+            a = coeffs if coeffs is not None else tuple(int(rng.integers(0, n_channels)) for _ in range(k))
+            b = offset if offset is not None else int(rng.integers(0, n_channels))
+            s = seed_state if seed_state is not None else tuple(int(rng.integers(0, n_channels)) for _ in range(k))
+            return cls(n_channels, a, b, s)
+
+        return cls._draw_lively(n_channels, make)
+
+    def _rule(self, hist):
+        # hist[-1] is c_{t-1}; coeffs[0] multiplies it
+        return sum(a * hist[-1 - i] for i, a in enumerate(self.coeffs)) + self.offset
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "order": self.order}
+
+
+@register("nonlinear_rec")
+class NonlinearRecurrenceGenerator(_RecurrenceGenerator):
+    """Bilinear order-2 recurrence ``c_t = a c_{t-1} c_{t-2} + b c_{t-1} + e c_{t-2} + d (mod M)``.
+
+    A genuinely nonlinear rule over two past channels (the product term), the
+    order-2 analogue of the quadratic congruential generator.
+    """
+
+    order = 2
+
+    def __init__(self, n_channels: int, a: int, b: int, e: int, d: int,
+                 seed_state: tuple[int, int]):
+        super().__init__(n_channels, seed_state)
+        self.a, self.b, self.e, self.d = (int(v) % n_channels for v in (a, b, e, d))
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               params: tuple[int, int, int, int] | None = None,
+               seed_state: tuple[int, int] | None = None):
+        rng = rng or np.random.default_rng()
+
+        def make():
+            if params is not None:
+                a, b, e, d = params
+            else:
+                a = int(rng.integers(1, n_channels))          # keep the product term
+                b, e, d = (int(rng.integers(0, n_channels)) for _ in range(3))
+            s = seed_state if seed_state is not None else tuple(int(rng.integers(0, n_channels)) for _ in range(2))
+            return cls(n_channels, a, b, e, d, s)
+
+        return cls._draw_lively(n_channels, make)
+
+    def _rule(self, hist):
+        c1, c2 = hist[-1], hist[-2]
+        return self.a * c1 * c2 + self.b * c1 + self.e * c2 + self.d
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels}
+
+
+@register("lookup_table")
+class LookupTableGenerator(Generator):
+    """Periodic lookup table ``c_t = T[(t + phase) mod P]`` (with an optional drift).
+
+    The commonest hopper in fielded systems: a stored hop table cycled by a slot
+    counter (e.g. TSCH-style ``table[(ASN + offset) mod N]``). Channels may
+    repeat inside the table, so a short context does not identify the position;
+    the sequence is pinned by ``c_t = c_{t-P}``. With ``drift != 0`` the table
+    is also shifted by ``drift`` per slot (see :class:`HybridSumGenerator`),
+    which obeys ``c_t = c_{t-P} + P*drift``.
+    """
+
+    def __init__(self, n_channels: int, table: tuple[int, ...], phase: int, drift: int = 0):
+        super().__init__(n_channels)
+        self.table = tuple(int(c) % n_channels for c in table)
+        self.period = len(self.table)
+        self._phase = int(phase) % self.period
+        self.drift = int(drift) % n_channels
+        self.t = self._phase
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               period: int | None = None, table: tuple[int, ...] | None = None,
+               phase: int | None = None, drift: int = 0):
+        rng = rng or np.random.default_rng()
+        if table is None:
+            P = int(period) if period is not None else int(rng.integers(8, 33))
+            table = tuple(int(c) for c in rng.integers(0, n_channels, size=P))
+        if phase is None:
+            phase = int(rng.integers(0, len(table)))
+        return cls(n_channels=n_channels, table=table, phase=phase, drift=drift)
+
+    def reset(self) -> None:
+        self.t = self._phase
+
+    def next_channel(self) -> int:
+        c = (self.table[self.t % self.period] + self.drift * self.t) % self.n_channels
+        self.t += 1
+        return c
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels,
+                "period": self.period, "drift": self.drift}
+
+
+@register("hybrid_sum")
+class HybridSumGenerator(LookupTableGenerator):
+    """Hybrid of a periodic table and an arithmetic drift: ``T[t mod P] + d*t``."""
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               period: int | None = None, table: tuple[int, ...] | None = None,
+               phase: int | None = None, drift: int | None = None):
+        rng = rng or np.random.default_rng()
+        if drift is None:
+            drift = int(rng.integers(1, n_channels))
+        return super().create(n_channels, rng, period=period, table=table,
+                              phase=phase, drift=drift)
+
+
+@register("hybrid_switch")
+class HybridSwitchGenerator(Generator):
+    """Piecewise hopper that changes its rule every ``segment`` slots.
+
+    Each segment draws a fresh rule -- an arithmetic step, an order-2 affine
+    recurrence, or a short lookup table -- and continues from the current
+    channels. It models emitters that re-key or change mode on a schedule; the
+    predictor has to notice the switch and re-lock quickly.
+    """
+
+    def __init__(self, n_channels: int, segment: int, seed: int):
+        super().__init__(n_channels)
+        self.segment = int(segment)
+        self._seed = int(seed)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               segment: int = 40, seed: int | None = None):
+        rng = rng or np.random.default_rng()
+        if seed is None:
+            seed = int(rng.integers(0, 2 ** 31))
+        return cls(n_channels=n_channels, segment=segment, seed=seed)
+
+    def reset(self) -> None:
+        self._rng = np.random.default_rng(self._seed)
+        self.t = 0
+        self.hist = [int(c) for c in self._rng.integers(0, self.n_channels, size=2)]
+        self._new_rule()
+
+    def _new_rule(self) -> None:
+        M = self.n_channels
+        kind = ("step", "affine2", "table")[int(self._rng.integers(0, 3))]
+        if kind == "step":
+            self.rule = ("step", int(self._rng.integers(1, M)))
+        elif kind == "affine2":
+            for _ in range(200):
+                a1, a2, b = (int(v) for v in self._rng.integers(0, M, size=3))
+                h = list(self.hist)
+                for _ in range(48):
+                    h.append((a1 * h[-1] + a2 * h[-2] + b) % M)
+                if _lively(h[2:], M, min_distinct=6):
+                    break
+            self.rule = ("affine2", a1, a2, b)
+        else:
+            P = int(self._rng.integers(5, 13))
+            self.rule = ("table", tuple(int(c) for c in self._rng.integers(0, M, size=P)))
+
+    def next_channel(self) -> int:
+        if self.t > 0 and self.t % self.segment == 0:
+            self._new_rule()
+        M = self.n_channels
+        r = self.rule
+        if r[0] == "step":
+            c = (self.hist[-1] + r[1]) % M
+        elif r[0] == "affine2":
+            c = (r[1] * self.hist[-1] + r[2] * self.hist[-2] + r[3]) % M
+        else:
+            c = r[1][self.t % len(r[1])]
+        self.hist = [self.hist[-1], c]
+        self.t += 1
+        return c
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "segment": self.segment}
+
+
+@register("noisy_rule")
+class NoisyRuleGenerator(Generator):
+    """Stochastic hopper with structure: an affine rule plus random jumps.
+
+    ``c_t = a c_{t-1} + b`` with probability ``1 - eps``, otherwise a uniformly
+    random channel. The best achievable top-1 is about ``1 - eps + eps/M``: the
+    jumps are pure entropy no predictor can beat, the rule part is learnable.
+    """
+
+    def __init__(self, n_channels: int, a: int, b: int, eps: float, start: int, seed: int):
+        super().__init__(n_channels)
+        self.a, self.b = int(a) % n_channels, int(b) % n_channels
+        self.eps = float(eps)
+        self._start, self._seed = int(start) % n_channels, int(seed)
+        self.reset()
+
+    @classmethod
+    def create(cls, n_channels: int, rng: np.random.Generator | None = None,
+               eps: float = 0.1, a: int | None = None, b: int | None = None,
+               start: int | None = None):
+        rng = rng or np.random.default_rng()
+        if a is None:   # a unit multiplier permutes the channels, so no collapse
+            a = int(rng.choice([x for x in range(1, n_channels) if math.gcd(x, n_channels) == 1]))
+        if b is None:
+            b = int(rng.integers(1, n_channels))
+        if start is None:
+            start = int(rng.integers(0, n_channels))
+        return cls(n_channels, a, b, eps, start, int(rng.integers(0, 2 ** 31)))
+
+    def reset(self) -> None:
+        self._rng = np.random.default_rng(self._seed)
+        self.c = self._start
+
+    def next_channel(self) -> int:
+        if self._rng.random() < self.eps:
+            self.c = int(self._rng.integers(0, self.n_channels))
+        else:
+            self.c = (self.a * self.c + self.b) % self.n_channels
+        return self.c
+
+    def describe(self) -> dict:
+        return {"name": self.name, "n_channels": self.n_channels, "eps": self.eps}
