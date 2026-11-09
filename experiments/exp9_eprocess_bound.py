@@ -1,9 +1,10 @@
 """Experiment 9: the anytime-valid false-identification bound (paper Section 10).
 
 With the e-process stopping rule, Ville's inequality bounds the probability of
-ever declaring the wrong generator by the nominal beta, *whenever* the system
-stops. That guarantee is against the mixture-of-competitors null, i.e. it holds
-when the true generator is itself in the bank. So the bound is tested exactly
+ever declaring a given wrong generator over the truth by the nominal beta,
+*whenever* the system stops. The e-value is against the strongest in-bank
+competitor, so the guarantee holds when the true generator is itself in the bank
+(for each wrong generator; (K-1)·beta for any of them). So the bound is tested exactly
 there: in-bank deterministic truths, and a false-ID is declaring a *different*
 in-bank generator. We sweep beta and plot the empirical false-ID against the
 nominal diagonal; it should stay on or under the line.

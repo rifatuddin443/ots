@@ -220,12 +220,16 @@ Two stopping rules read the cumulative reduced log-likelihoods
 
 - **MSPRT.** Declare `k* = argmax_k π_t(k)` at the first slot where
   `π_t(k*) ≥ 1 − δ`. If `k* = 0`, the declared outcome is *unknown*.
-- **E-process (anytime-valid).** For hypothesis `k`, the e-value against the
-  mixture of its competitors is
-  `E_t(k) = P(o_{1:t} | H_k) / Σ_{j≠k} ρ_j P(o_{1:t} | H_j)`, with
-  `ρ_j = π_0(j)/(1−π_0(k))`. Declare when `E_t(k) ≥ 1/β`. Under the
-  mixture-of-competitors null (the true generator is in the bank), Ville's
-  inequality bounds the probability of *ever* declaring a wrong `k` by `β`.
+- **E-process (anytime-valid).** For hypothesis `k`, the e-value against its
+  strongest competitor is
+  `E_t(k) = P(o_{1:t} | H_k) / max_{j≠k} P(o_{1:t} | H_j)`. Declare when
+  `E_t(k) ≥ 1/β`. If the truth is an in-bank `H_j`, then `E_t(k) ≤ P(·|H_k)/P(·|H_j)`,
+  a mean-one martingale under `H_j`, so Ville's inequality bounds the probability
+  of *ever* declaring `k` over `j` by `β`, for every competitor `j` regardless of
+  its prior weight (and by `(K−1)β` for declaring any wrong `k`).
+  `EProcess(against="mixture")` keeps the earlier prior-weighted denominator
+  `Σ_{j≠k} ρ_j P(o_{1:t} | H_j)`, `ρ_j = π_0(j)/(1−π_0(k))`, whose `β` bound holds
+  only when the truth is drawn from that mixture (`β/ρ_j` against one `j`).
 
 The system also emits, each slot, the posterior-weighted next-hop distribution
 `p̂_t(c) = Σ_k π_t(k) p_k(c)` and the predictability score
@@ -552,6 +556,10 @@ versus nominal `β`:
 
 Every point sits on or under the diagonal `y = β`.
 
+> **Not re-run (2026-11-04):** these numbers use the earlier mixture-of-competitors
+> denominator. The default is now the max-competitor e-value (Section 3), which
+> stops later and has a per-competitor bound; re-run `exp9` to refresh the table.
+
 **Why.** Under the e-process, `E_t(k)` is a non-negative martingale against the
 mixture-of-competitors null, so Ville's inequality caps the probability of *ever*
 crossing `1/β` at `β`, whatever the (data-dependent) stopping slot. The empirical
@@ -759,6 +767,16 @@ hopeless, the rest falls to barrage. **Panel B** (window vs hop rate, on a
 breakable generator) is the classic partition into exact-recovery, short-horizon
 prediction and barrage. The map's thresholds match the mechanisms the simulated
 experiments measure.
+
+> **Not re-run (2026-11-04):** this figure predates a fix to the exact-recovery
+> rule, which credited `P_d²` of the hops as one clean run instead of asking
+> whether a `2L`-hop run is fully detected (`P_d^{2L}` per run;
+> `feasibility.prob_clean_run`). With Panel B's base (`P_d = 0.55`, `L = 14`) a
+> clean 28-hop run essentially never occurs, so the exact-recovery band vanishes
+> and Panel B shows only barrage and short-horizon prediction. A base such as
+> `P_d = 0.75`, `L = 7` restores all three bands. Plain Berlekamp–Massey is the
+> mechanism modelled here; the state-filtered recovery of Section 5.6 does not
+> need consecutive hops.
 
 ### 5.18 Sequence-type coverage and hops to lock — `exp19_sequence_coverage.png`
 

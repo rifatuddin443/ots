@@ -37,6 +37,38 @@ Checks: all 131 tests pass; a headless browser run confirmed pause stops the
 hop counter, Space resumes, switching while paused stays paused, and every
 sampled unsure call (top-1 under 90%) shows 2–3 channels.
 
+## 2026-11-04 — Fixes from the novelty audit: clean-run feasibility, per-competitor e-process
+
+Two correctness fixes found while checking the paper's claims against the literature
+(audit: `reports/OTS novelty claims audit.md`).
+
+### Feasibility (`fhew/feasibility.py`)
+- `can_recover_exactly` credited `P_d²` of the hops as one clean run, but a run of
+  `2L` hops is fully detected with probability `P_d^{2L}` (0.81 vs ≈0.23 at
+  `L = 7`, `P_d = 0.9`). New `prob_clean_run(n, k, p)` gives the exact probability
+  that `n` hops contain `k` detected in a row; exact recovery is feasible when a
+  `2L` run is seen with probability ≥ `min_prob` (default 0.5).
+
+### E-process (`fhew/stopping.py`)
+- `EProcess` now defaults to the e-value against the strongest competitor,
+  `p_k / max_{j≠k} p_j`, giving a Ville bound of `β` against *each* in-bank
+  competitor (union: `(K−1)β` for any wrong one). The old prior-weighted mixture
+  denominator, whose bound held only under that mixture, is kept as
+  `EProcess(against="mixture")`. Stopping is stricter, so `τ` grows.
+
+### Tests
+- `tests/test_fhew.py` — 2 added: the max denominator ignores a competitor's prior
+  weight; Monte-Carlo check that each wrong hypothesis crosses `1/β` at most `β`
+  of the time.
+- `tests/test_mixture_allocation.py` — 1 added: the clean-run probability and the
+  exact-recovery rule at short/long windows and a lossy sensor.
+
+**Not re-run:** exp9 (e-process) and exp17 (feasibility) figures and tables predate
+these fixes. With exp17's Panel B base (`P_d = 0.55`, `L = 14`) the exact-recovery
+band now vanishes; see `methodology_and_results.md` §5.17.
+
+---
+
 ## 2026-11-03 — Structured sequence coverage: rule search, seed beam, wide BM
 
 Closes the gaps in which hop-sequence types the predictor covers, aiming at the

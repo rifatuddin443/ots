@@ -49,18 +49,39 @@ class RegimeParams:
     key_strength: float = 0.0       # >0 marks a keyed/unbreakable generator
 
 
-def can_recover_exactly(rp: RegimeParams) -> bool:
-    """Enough clean consecutive hops within the window for algebraic recovery.
+def prob_clean_run(n: int, k: int, p: float) -> float:
+    """Probability that ``n`` hops, each detected w.p. ``p``, contain ``k`` in a row.
 
-    Berlekamp-Massey needs about ``2L`` clean *consecutive* outputs; detection
-    thinning (``p_d``) and a long dwell (fewer distinct hops per slot) shrink the
-    usable budget. A keyed generator is never exactly recoverable.
+    Uses the success-run recursion ``A_m = A_{m-1} - (1-p) p^k A_{m-k-1}`` for
+    ``A_m = P(no run of k in m trials)``.
+    """
+    if k <= 0:
+        return 1.0
+    if n < k or p <= 0.0:
+        return 0.0
+    if p >= 1.0:
+        return 1.0
+    pk = p ** k
+    a = np.ones(n + 1)
+    a[k] = 1.0 - pk
+    for m in range(k + 1, n + 1):
+        a[m] = a[m - 1] - (1.0 - p) * pk * a[m - k - 1]
+    return float(1.0 - a[n])
+
+
+def can_recover_exactly(rp: RegimeParams, *, min_prob: float = 0.5) -> bool:
+    """Likely enough to see a clean consecutive run long enough for algebraic recovery.
+
+    Berlekamp-Massey needs about ``2L`` clean *consecutive* outputs, and a run of
+    ``2L`` hops is fully detected with probability ``p_d ** (2L)``; detection
+    thinning and a long dwell (fewer distinct hops per slot) shrink the chance of
+    seeing one. Feasible when some ``2L`` run is clean with probability at least
+    ``min_prob``. A keyed generator is never exactly recoverable.
     """
     if rp.key_strength > 0:
         return False
-    distinct_hops = rp.window * rp.hop_rate / max(1.0, rp.dwell)
-    clean_consecutive = distinct_hops * (rp.p_d ** 2)   # a gap breaks the run
-    return clean_consecutive >= 2 * rp.register_length
+    distinct_hops = int(rp.window * rp.hop_rate / max(1.0, rp.dwell))
+    return prob_clean_run(distinct_hops, 2 * rp.register_length, rp.p_d) >= min_prob
 
 
 def can_predict_short_horizon(rp: RegimeParams, *, kappa_min: float = 0.25) -> bool:

@@ -1,0 +1,443 @@
+% =====================================================================
+%  Results and Discussion — conference paper section (IEEE two-column)
+%  Source of numbers: docs/methodology_and_results.md (as recorded) and
+%  results/exp19_sequence_coverage.json (committed).
+%
+%  Requires in the preamble:
+%    \usepackage{booktabs,multirow,graphicx,xcolor}
+%    \newcommand{\stale}{\textsuperscript{\textcolor{red}{\dag}}}
+%  Every number marked \stale comes from a run that predates a code change
+%  (exp9, exp14, exp15, exp17, exp18) and MUST be re-run before submission;
+%  delete the macro and the footnote in Sec. V-A once refreshed.
+%  Figure paths assume figures are copied next to the .tex (docs/figures/).
+% =====================================================================
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Experimental setup}
+\label{sec:setup}
+
+All experiments use a single emitter on $M=16$ channels and a slot-synchronous
+detection-level sensor: the true channel is detected with probability $P_d$ and
+every other channel raises a false alarm independently with probability $P_{fa}$.
+The generator library contains the in-bank families (LFSR, filtered LFSR, LCG,
+full-state LCG, weak-seed PRNG, first-order Markov, logistic/tent/H\'enon maps),
+three \emph{held-out} families for which no expert exists (lagged-Fibonacci,
+quadratic congruential, sine map), eight structured sequence types, and a keyed
+SHA-256 CSPRNG as the unpredictable control. Experts see only observations; true
+channels and generator parameters are never passed to the bank (information
+parity, Sec.~\ref{sec:method}).
+
+Unless stated otherwise, identification uses MSPRT with $\delta=0.05$ and the
+conference bank (one hypothesis per family plus $H_0$), windows of $T=100$--$160$
+slots, and 30--50 seeds per condition. We report identification accuracy,
+hops-to-identify $\tau$ over correct declarations, and two error rates: any
+false identification, and \emph{hard} false identification, i.e.\ declaring an
+algebraic family (LFSR, filtered LFSR, LCG, weak-seed) that is not the truth.
+Prediction is scored by top-1 next-channel accuracy against the chance line
+$1/M=0.0625$; ``steady state'' is the final 40 slots. Intervals are bootstrap
+95\% CIs; paired comparisons use a paired bootstrap and McNemar's test.
+Values marked \stale{} predate the final code revision and are being re-run.
+
+% ---------------------------------------------------------------------
+\subsection{Identification speed and the stopping law}
+\label{sec:res-speed}
+
+Table~\ref{tab:hops} reports hops-to-identify as the sensor thins. The three
+deterministic in-bank families are identified at 100\% accuracy in 4--5 hops
+with a perfect sensor and in 11--13 hops at $P_d=0.5$. The Markov hopper needs
+roughly ten times as many hops (46--74) and its accuracy falls to 0.83 at
+$P_d=0.5$, because its transition matrix has to be estimated online before it
+predicts better than the uniform $H_0$.
+
+\begin{table}[t]
+\centering
+\caption{Mean hops-to-identify versus $P_d$ (MSPRT, $\delta=0.05$,
+$P_{fa}=0.02$, 30 seeds).}
+\label{tab:hops}
+\begin{tabular}{lcccccc}
+\toprule
+$P_d$ & 1.0 & 0.9 & 0.8 & 0.7 & 0.6 & 0.5 \\
+\midrule
+LFSR      & 4.2  & 4.7  & 5.5  & 7.1  & 8.3  & 10.9 \\
+Weak-seed & 4.2  & 4.8  & 5.6  & 7.2  & 8.8  & 11.6 \\
+LCG       & 4.9  & 5.5  & 6.7  & 8.1  & 10.0 & 13.3 \\
+Markov    & 45.9 & 52.5 & 55.5 & 65.9 & 68.1 & 74.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The growth follows the sequential-test law
+$\mathbb{E}[\tau]\approx\log(1/\delta)/(P_d\,\min_{k\neq k^*}\mathrm{KL})$.
+On a Markov source, chosen because its per-slot KL is finite and the law is
+therefore visible, $\mathbb{E}[\tau]$ is linear in $\log(1/\delta)$
+($R^2=0.984$) and in $1/P_d$ ($R^2=0.997$). This confirms that a missed
+detection removes one likelihood factor and otherwise does no damage. The
+deterministic families saturate the law: one inconsistent observation removes a
+wrong candidate, so $\delta$ hardly matters for them.
+
+% ---------------------------------------------------------------------
+\subsection{The value of a sensor-aware likelihood}
+\label{sec:res-sensor}
+
+Table~\ref{tab:ablation} isolates the emission model. The same bank is run with
+the sensor-aware likelihood and with a naive clean-match score at a stressing
+$P_{fa}=0.05$. The two agree for $P_d\ge0.8$. Below that the naive bank slows
+down and starts naming wrong generators: at $P_d=0.5$ its accuracy is 0.60
+against 0.98, and it needs 21.1 hops against 15.3. The naive score counts a
+missed hop as evidence against the true generator and a phantom as evidence for
+a wrong one. The sensor-aware emission does neither, since a phantom raises
+every candidate by the same factor and cancels in the posterior.
+
+\begin{table}[t]
+\centering
+\caption{Sensor-aware vs naive likelihood ($P_{fa}=0.05$, 30 seeds per generator).}
+\label{tab:ablation}
+\begin{tabular}{llcccccc}
+\toprule
+& $P_d$ & 1.0 & 0.9 & 0.8 & 0.7 & 0.6 & 0.5 \\
+\midrule
+\multirow{2}{*}{Accuracy} & aware & 1.00 & 1.00 & 1.00 & 0.99 & 0.98 & \textbf{0.98} \\
+                          & naive & 1.00 & 1.00 & 1.00 & 0.99 & 0.90 & 0.60 \\
+\midrule
+\multirow{2}{*}{Hops}     & aware & 4.7 & 5.6 & 7.2 & 8.9  & 11.1 & \textbf{15.3} \\
+                          & naive & 4.7 & 5.5 & 8.0 & 13.4 & 16.7 & 21.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The same effect is sharper at the level of a single recovery algorithm. For an
+$L=7$ LFSR, plain Berlekamp--Massey recovers the register on every run at
+$P_d=1$ and on \emph{no} run for any $P_d<1$, because it needs about $2L$
+consecutive clean outputs and one miss breaks the run. State-enumeration
+recovery under the detection channel keeps a posterior over register states
+through gaps and recovers on every run across the whole $P_d$ sweep. False
+alarms are equally harmless to the in-bank families: with $P_d=0.8$ and
+$P_{fa}$ up to 0.1, accuracy stays at 1.00 and false identification at 0.00.
+
+% ---------------------------------------------------------------------
+\subsection{Open-set safety}
+\label{sec:res-safety}
+
+\emph{None-of-the-above.} On the keyed CSPRNG the bank declares
+\emph{unknown} in 87\% of runs and never claims an algebraic break
+(hard false-ID 0/40, 95\% upper bound 7.5\%). On a filtered LFSR, which the
+conference bank has no expert for, it falls back to the Markov hypothesis, a
+soft error, again with no hard false identification. A pairwise SPRT without
+$H_0$ names a generator on every such run (100\% false-ID). Any closed-set test
+must do this, so the comparison shows the need for an explicit unknown class
+rather than a weakness peculiar to SPRT.
+
+\emph{Stale reconnaissance.} When the secret is placed outside the searched
+range (LCG seed beyond the searched keyspace, weak-seed keyspace $2^{16}$
+against 256 searched, LFSR length 10 against $\le7$), hard false-ID is
+0.00/0.03/0.03 and the bank routes to unknown in 63\%/87\%/30\% of runs. With no
+in-range candidate, every deterministic likelihood stays near uniform, so the
+bank falls back to $H_0$ or a soft Markov answer instead of asserting a break.
+
+\emph{Method comparison.} Table~\ref{tab:methods} compares decision rules on
+identical episodes and likelihoods. The bank is the most accurate method and
+the only one that is both accurate and low in false identification. The
+fixed-length and SPRT tests lose accuracy on exactly the out-of-bank episodes
+where they are forced to name a class. The learned classifier has an
+\emph{unknown} output and therefore a low false-ID rate, but summary features
+cannot separate an LCG from a weak-seed PRNG from a CSPRNG, so its accuracy is
+0.38.
+
+\begin{table}[t]
+\centering
+\caption{Decision rules on the same mixed in/out-of-bank episodes
+($P_d=0.8$, $P_{fa}=0.02$, 30 seeds). $\Delta$: paired-bootstrap accuracy gain
+of the bank; all $p<10^{-3}$.}
+\label{tab:methods}
+\begin{tabular}{lcccc}
+\toprule
+Method & Acc. & False-ID & Hops & $\Delta$ \\
+\midrule
+\textbf{Bank + MSPRT (ours)} & \textbf{0.79} & 0.19 & 21.1 & --- \\
+Pairwise SPRT (no $H_0$)     & 0.66 & 0.34 & 5.8  & +0.139 \\
+Fixed-length LRT             & 0.67 & 0.33 & 30.0 & +0.128 \\
+Learned classifier           & 0.38 & 0.11 & 2.0  & +0.411 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Coverage at scale.} Table~\ref{tab:coverage} aggregates 7{,}500 episodes
+(10 families $\times$ 5 $P_d$ $\times$ 3 $P_{fa}$ $\times$ 50 seeds) through the
+one-expert-per-family identification bank. Accuracy is at least 0.92 for nine of
+the ten families. Hard false-ID is at most 0.01 for nine families and 0.05 for
+the tent map, whose quantised dynamics sometimes admit a short consistent
+deterministic fit. The full-state LCG is the exception in accuracy (0.50). At
+$M=16$ its period is at most 16, so it is also an exact Markov cycle; when $P_d$
+is too low to supply the six consecutive clean outputs the cryptanalytic expert
+needs, the Markov expert legitimately wins. This is a soft error, and accuracy
+is 0.975 at $P_d=0.95$. With the full 13-expert bank at $P_d=0.95$, the
+confusion matrix is diagonal: each generator is won by its intended expert,
+plain BM never beats its gap-tolerant counterpart, and the CSPRNG goes to $H_0$
+(0.925).
+
+\begin{table}[t]
+\centering
+\caption{Per-family identification over 7{,}500 episodes
+($P_d\in[0.6,1]$, $P_{fa}\in\{0,0.02,0.05\}$, 50 seeds per cell).}
+\label{tab:coverage}
+\begin{tabular}{lcc|lcc}
+\toprule
+Family & Acc. & Hard FID & Family & Acc. & Hard FID \\
+\midrule
+LFSR          & 0.99 & 0.01 & Logistic & 1.00 & 0.00 \\
+Filtered LFSR & 1.00 & 0.00 & Tent     & 0.95 & 0.05 \\
+LCG           & 0.99 & 0.01 & H\'enon  & 0.99 & 0.01 \\
+Full-state LCG& 0.50 & 0.01 & Markov   & 0.92 & 0.01 \\
+Weak-seed     & 1.00 & 0.00 & CSPRNG   & 0.88 & 0.01 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------
+\subsection{Anytime-valid stopping and calibration}
+\label{sec:res-guarantee}
+
+With e-process stopping, the probability of ever declaring a wrong in-bank
+generator is bounded by Ville's inequality. Sweeping
+$\beta\in\{0.5,\dots,0.01\}$ on in-bank truths ($P_d=0.7$, $P_{fa}=0.05$,
+$\ge100$ seeds per family), the empirical false-ID is 0.24, 0.10, 0.03, 0.027,
+0.01 and 0.01\stale{}, on or below $y=\beta$ at every point. The bound is
+conservative here because the deterministic families separate quickly. We
+neither claim nor test the bound for out-of-bank truths, where the martingale
+argument does not apply and protection comes from $H_0$
+(Sec.~\ref{sec:res-safety}).
+
+The identification posterior is well calibrated in the high-confidence bin,
+where most declarations fall and accuracy is close to 1. The expected
+calibration error over 180 declarations is 0.154. Almost all of it comes from
+boundary and out-of-bank sources (Markov, CSPRNG, filtered LFSR), where a short
+window sometimes produces confident mid-range errors.
+
+% ---------------------------------------------------------------------
+\subsection{Next-channel prediction}
+\label{sec:res-predict}
+
+Table~\ref{tab:predict} reports the headline metric. Once a deterministic
+generator is identified, its future is known, so the predictor reaches 1.00
+top-1 on LFSR, weak-seed and LCG emitters. The bank's own next-hop distribution
+already reaches log-loss 0.07--0.09, against $\log M=2.77$ for uniform. On the
+CSPRNG both predictors fall to chance (0.07), which is the correct answer.
+
+The held-out families test whether prediction outlives a limited bank. On
+lagged-Fibonacci, whose next channel depends on the previous two, the Fixed-Share
+predictor with the training-free universal expert reaches 0.88 top-1, against
+0.42 for the identification-only mixture. The bank's best available model is
+first-order and cannot represent the rule. Across a $P_d$ sweep from 1.0 to 0.7
+the proposed predictor falls from 0.96 to 0.40. The bank-only predictor is
+flat at 0.34--0.40, so the gap is large at high $P_d$ and closes by
+$P_d=0.7$.\stale{} The quadratic congruential generator is
+predicted well by both (0.95/0.99), because its full-period order-1 cycle is
+also captured by the Markov expert. The chaotic sine map is predicted at about
+seven times chance by both (0.43/0.44).
+
+\begin{table}[t]
+\centering
+\caption{Steady-state top-1 next-channel accuracy ($P_d=0.95$, $P_{fa}=0$,
+$T=120$, 12 seeds; chance $=0.0625$). Held-out families have no expert.}
+\label{tab:predict}
+\begin{tabular}{lcccc}
+\toprule
+Generator & Proposed & Bank only & Markov & Uniform \\
+\midrule
+LFSR        & 1.00 & 1.00 & 0.04 & 0.06 \\
+Weak-seed   & 1.00 & 1.00 & 0.07 & 0.06 \\
+LCG         & 1.00 & 1.00 & 0.07 & 0.06 \\
+Logistic    & 0.54 & 0.54 & 0.06 & 0.06 \\
+Markov      & 0.38 & 0.37 & 0.10 & 0.06 \\
+\midrule
+\emph{Lagged-Fib.} (held out)   & \textbf{0.88}\stale & 0.42\stale & 0.26 & 0.06 \\
+\emph{Quadratic CG} (held out)  & 0.95\stale & 0.99\stale & 0.03 & 0.06 \\
+\emph{Sine map} (held out)      & 0.43\stale & 0.44\stale & 0.05 & 0.06 \\
+\midrule
+CSPRNG (control) & 0.07 & 0.05 & 0.06 & 0.06 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Structured sequences and secrets outside reconnaissance.}
+Table~\ref{tab:structured} adds the structured experts (Bayesian rule search,
+full-keyspace seed beam, adaptive-window BM) and scores every structured
+sequence type on a clean and a lossy sensor. Every type moves to or near its
+ceiling. Hops-to-lock (the median observed slots after which the next five
+predictions are all correct) are close to the information minimum: 4 hops for an
+arithmetic progression, $d+3$ for a degree-$d$ polynomial, and just over one
+period for a lookup table, which cannot be predicted before one period has
+been seen. Seed search over the whole keyspace locks a weak-seed PRNG with a
+$2^{18}$ keyspace in 5--7 hops, where the range-limited expert never locks. Two
+cases stay out of reach, as they should. A 16-bit LFSR is recovered on a clean
+stream (1.00) but not on a lossy one (0.12), because Berlekamp--Massey needs
+about 11 consecutive clean hops. The CSPRNG stays at chance.
+
+\begin{table}[t]
+\centering
+\caption{Steady-state top-1 before $\to$ after the structured experts, and
+median hops-to-lock (after), $T=120$, 8 seeds.}
+\label{tab:structured}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lcc|cc}
+\toprule
+& \multicolumn{2}{c|}{$P_d{=}0.95,\,P_{fa}{=}0$} & \multicolumn{2}{c}{$P_d{=}0.85,\,P_{fa}{=}0.02$} \\
+Sequence type & top-1 & lock & top-1 & lock \\
+\midrule
+Arithmetic            & 0.98$\to$\textbf{1.00} & 4    & 0.86$\to$\textbf{0.99} & 6 \\
+Polynomial ($d{=}2$)  & 0.93$\to$\textbf{1.00} & 5    & 0.62$\to$\textbf{1.00} & 9 \\
+Linear rec.\ (ord.\ 3)& 0.72$\to$\textbf{1.00} & 7.5  & 0.42$\to$\textbf{0.98} & 14 \\
+Bilinear rec.         & 0.86$\to$\textbf{1.00} & 6.5  & 0.66$\to$\textbf{0.99} & 11 \\
+Lookup table          & 0.86$\to$\textbf{1.00} & 22.5 & 0.40$\to$\textbf{0.95} & 36.5 \\
+Table + drift         & 0.37$\to$\textbf{1.00} & 28.5 & 0.10$\to$\textbf{0.92} & 38 \\
+Rule switch / 40 hops & 0.50$\to$\textbf{0.84} & 7    & 0.27$\to$\textbf{0.71} & 12.5 \\
+Noisy rule (10\%)     & 0.84$\to$\textbf{0.87} & 14.5 & 0.62$\to$\textbf{0.72} & 13.5 \\
+\midrule
+Weak seed, $2^{18}$   & 0.07$\to$\textbf{1.00} & 5    & 0.07$\to$\textbf{1.00} & 7 \\
+LCG, any seed         & 0.20$\to$\textbf{1.00} & 4    & 0.18$\to$\textbf{1.00} & 6 \\
+LFSR, $L{=}16$        & 0.06$\to$\textbf{1.00} & 15.5 & 0.04$\to$0.12          & 61 \\
+\midrule
+CSPRNG (control)      & 0.06$\to$0.07          & ---  & 0.06$\to$0.07          & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------------
+\subsection{Tracking a generator switch}
+\label{sec:res-switch}
+
+Table~\ref{tab:switch} replays random switch plans over all 13 algorithms, with
+regimes of 50--90 hops and a fresh secret at every switch, through the
+switch tracker. Switches are detected in 90--100\% of cases. The median delay is
+0 hops on a perfect sensor and 11 on a contested one. False alarms stay at or
+below 0.25 per 100 hops. Every switch \emph{into} a family the bank has an
+expert for was detected on every sensor. The misses are between two sources
+with no exact structure (e.g.\ Markov $\to$ CSPRNG), where the old segment's
+learners simply adapt. From hop 6 after a switch, next-hop top-1 is 71--79\% on
+perfect and strong sensors, matching an oracle restarted at the true switch.
+Hops 1--5 are the evidence any detector needs to notice the change. One lock
+in 36 regimes on the contested sensor was dangerous: an LFSR candidate fitted a
+stretch of a Markov hopper's noisy hops, mostly through ghost detections.
+
+\begin{table}[t]
+\centering
+\caption{Switch tracking: 6 random plans $\times$ 400 hops per sensor, 13
+algorithms, $M=16$.\stale}
+\label{tab:switch}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+Sensor ($P_d$, $P_{fa}$) & Perfect & Strong & Typical & Contested \\
+& (1, 0) & (.95, .01) & (.8, .02) & (.6, .05) \\
+\midrule
+Switches detected      & 100\% & 97\% & 93\% & 90\% \\
+Delay, median/90th pct & 0/6 & 1/6 & 4/12 & 11/24 \\
+False alarms /100 hops & 0.04 & 0.04 & 0.25 & 0.13 \\
+Named exactly at end   & 81\% & 72\% & 78\% & 75\% \\
+Dangerous locks        & 0\% & 0\% & 0\% & 3\% \\
+\midrule
+Top-1, hops 1--5 after & 31\% & 21\% & 9\%  & 5\% \\
+Top-1, hops 6--10      & 79\% & 71\% & 55\% & 21\% \\
+Top-1, hops 21--40     & 77\% & 75\% & 72\% & 56\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The response to an alarm also matters. On a near-deterministic Markov hopper
+that switches at mid-window, resetting the mixture weights \emph{and} flushing
+the universal predictor's context recovers top-1 prediction 1.2--2.3$\times$
+faster than resetting the weights alone\stale{} (15--46 against 33--56 hops
+over four concentration levels). The cumulative-evidence bank alone is slowest.
+
+% ---------------------------------------------------------------------
+% OPTIONAL (keep only if the paper retains the downstream-use claim; see
+% docs/paper/experiment_review.md §3 item 14 before keeping it).
+\subsection{Downstream use: acting on the predictive distribution}
+\label{sec:res-alloc}
+
+Feeding the whole predictive distribution, not just the top-1 channel, into a
+threshold-aware greedy knapsack over channels gives spot and barrage jamming as
+two ends of one rule. Against a CSPRNG the knapsack keeps a barrage-like floor
+(reward 0.11) where water-filling, which spreads every channel below the
+denial threshold, achieves 0.00. The two tie on a fully predictable LFSR
+(0.94/0.96). Against the unpredictable CSPRNG, a reactive follower that jams
+the currently observed channel raises reward from 0.11 at dwell 1 to 0.82 at
+dwell 8: an unpredictable source can still be jammed if it dwells longer than
+the reaction latency.
+
+% =====================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\emph{One likelihood explains most of the curves.} Every deterministic family
+is scored the same way, by enumerating its parameters and weighting each
+candidate trajectory through the reduced detection-level emission. This one
+design choice accounts for three separate observations: single-digit hops to
+identify (one inconsistent observation removes a candidate), $\tau$ that
+scales with $1/P_d$ and $\log(1/\delta)$ (a miss removes a factor and leaves
+the rest of the evidence intact), and immunity to false alarms (a phantom
+scales every candidate equally). The ablation in Table~\ref{tab:ablation} and
+the BM cliff measure the same thing at two levels. An algorithm that assumes a
+clean stream fails at the first miss; one that models the sensor degrades only
+as fast as the evidence does.
+
+\emph{Hard versus soft errors.} The bank's \emph{any-wrong} error rate is
+non-zero on boundary sources: a filtered LFSR read as Markov by the conference
+bank, or a full-state LCG read as Markov at low $P_d$. These are soft errors.
+The predicted next hop is still useful, and no false structural claim is made.
+The dangerous error is a confident claim of an algebraic break that does not
+exist, because it would lead an operator to commit resources to the wrong
+generator. That rate is at most 0.01 for nine of ten families over 7{,}500
+episodes, 0.05 for the tent map, and 1 of 36 regimes for the switch tracker
+under a contested sensor. A closed-set test makes the same error on every
+out-of-bank source. The case for an explicit generative $H_0$ is this
+asymmetry between error types, not raw accuracy.
+
+\emph{The predictability boundary is a result.} On a keyed CSPRNG the system
+answers \emph{unknown}, its predictive distribution flattens, and top-1 falls
+to $1/M$. A system that kept finding structure there would be overfitting
+noise. Detecting the boundary quickly and saying so is the desired behaviour,
+and it is what lets a downstream controller switch from prediction to reactive
+or barrage tactics (Sec.~\ref{sec:res-alloc}).
+
+\emph{A limited bank does not limit prediction as much.} Any bank of experts
+is finite, and an adversary can always choose a generator outside it. The
+Fixed-Share mixture weights experts by recent predictive skill, so when no
+identification expert fits, the training-free universal expert takes the
+weight within a few slots. The lagged-Fibonacci result (0.88 against 0.42) is
+the clearest case. The sine-map and Markov rows show the limit: if a source's
+structure is only statistical, the mixture can do no better than its best
+statistical learner. Program search over structured rules narrows the gap
+further (Table~\ref{tab:structured}), at a cost: a period-$P$ table cannot be
+predicted before one period has been observed, and the measured lock times sit
+close to that floor.
+
+\emph{Switching adversaries.} An identifier that accumulates evidence is, by
+construction, slow to forget. Two mechanisms address this at different
+granularities. Fixed-Share with a context flush handles drift and isolated
+switches cheaply. The switch tracker, whose run-length hypotheses each carry a
+bank anchored at the hypothesised switch slot, handles re-keyed counter-based
+generators, which an unanchored bank cannot re-identify at all. The
+contested-sensor row of Table~\ref{tab:switch} shows the price: a detection
+delay of about 11 hops and one dangerous lock, which matches the bank's own
+residual hard false-ID rate under that sensor.
+
+\emph{Limitations and threats to validity.} (i) All results are simulated.
+The sensor is slot-synchronous with i.i.d.\ misses and is \emph{matched}: the
+same $P_d$, $P_{fa}$ generate and score the data. Robustness to a mis-specified
+or bursty sensor, hop-timing jitter and interleaved emitters is not yet
+evaluated, and every parameter range is an assumption rather than a value
+calibrated on recordings. (ii) $M=16$ throughout. The full-state LCG result
+is confounded by its short period at this $M$, and runtime grows with the
+expert set: the switch tracker costs 40--90\,ms per hop, which limits it to
+slow hop rates without further engineering. (iii) The generators and the
+experts were written by the same authors. The held-out families reduce, but do
+not remove, the risk that the library favours the bank. (iv) The e-process
+guarantee holds only for in-bank truths, and protection out of bank is
+empirical. (v) Several headline prediction and tracking results use small seed
+counts (6--12), and zero error rates over 40 seeds have a 95\% upper bound
+near 7.5\%. These are the priorities for the journal version, together with
+an external learned predictor baseline and a calibrated next-hop
+distribution.

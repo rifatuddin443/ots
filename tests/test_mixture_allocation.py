@@ -27,7 +27,14 @@ from fhew.allocator import (
 )
 from fhew.dwell import DwellTracker, dwell_predictability, estimate_dwell
 from fhew.experts import ContextMixingHypothesis, MarkovHypothesis
-from fhew.feasibility import RegimeParams, can_react, classify, dwell_latency_grid
+from fhew.feasibility import (
+    RegimeParams,
+    can_react,
+    can_recover_exactly,
+    classify,
+    dwell_latency_grid,
+    prob_clean_run,
+)
 from fhew.likelihood import SensorAwareEmission
 from fhew.mixture import FixedShareMixture, HypothesisExpert, build_default_mixture
 from fhew.regime import (
@@ -380,6 +387,18 @@ def test_exact_recovery_when_enough_clean_hops():
     rp = RegimeParams(window=200, hop_rate=1.0, dwell=1, p_d=1.0, register_length=7,
                       key_strength=0.0, kappa=0.9)
     assert classify(rp) == "exact_recovery"
+
+
+def test_exact_recovery_needs_a_clean_2L_run():
+    # 2L = 14 hops in a row at P_d = 0.9 happens w.p. 0.9^14 ~ 0.23 per start; in
+    # 20 hops that is rarely seen, in 200 almost surely.
+    assert prob_clean_run(14, 14, 0.9) == pytest.approx(0.9 ** 14)
+    short = RegimeParams(window=20, p_d=0.9, register_length=7, kappa=0.9)
+    long_ = RegimeParams(window=200, p_d=0.9, register_length=7, kappa=0.9)
+    assert not can_recover_exactly(short) and can_recover_exactly(long_)
+    # A lossy sensor and a long register: no clean 28-hop run in ~1000 hops.
+    lossy = RegimeParams(window=240, hop_rate=4.0, p_d=0.55, register_length=14, kappa=0.9)
+    assert not can_recover_exactly(lossy)
 
 
 def test_dwell_latency_grid_has_reactive_band():

@@ -9,9 +9,9 @@ all-false-alarm constant has already cancelled). Both stopping rules read from
       ``1 - delta``. This is the multi-hypothesis SPRT, asymptotically optimal
       as ``delta`` shrinks.
     * :class:`EProcess` declares when a hypothesis's e-value crosses ``1/beta``.
-      Ville's inequality then bounds the false-identification probability by
-      ``beta`` *whenever* the run stops -- the right object for a short,
-      variable-length engagement window.
+      Ville's inequality then bounds the probability of declaring it over any
+      given in-bank competitor by ``beta`` *whenever* the run stops -- the right
+      object for a short, variable-length engagement window.
 """
 
 from __future__ import annotations
@@ -63,25 +63,35 @@ class MSPRT(StoppingRule):
 class EProcess(StoppingRule):
     r"""Anytime-valid e-process stopping.
 
-    For hypothesis ``k`` the e-value against the mixture of its competitors is
+    For hypothesis ``k`` the default e-value is against its strongest competitor
 
-        E_t(k) = p_k(o_{1:t}) / sum_{j != k} rho_j p_j(o_{1:t}),
-        rho_j = pi_0(j) / (1 - pi_0(k)).
+        E_t(k) = p_k(o_{1:t}) / max_{j != k} p_j(o_{1:t}).
 
-    ``E_t(k)`` is a non-negative martingale under the mixture-of-competitors
-    null, so by Ville's inequality ``P(exists t: E_t(k) >= 1/beta) <= beta`` when
-    that null holds. We declare the ``argmax_k E_t(k)`` once it crosses
-    ``1/beta``. The guarantee is stated honestly against the mixture null; the
-    per-generator false-identification rate is validated empirically against the
-    nominal ``beta`` line (paper Section 10).
+    If the truth is ``j != k`` then ``E_t(k) <= p_k / p_j``, a non-negative
+    martingale with mean 1 under ``H_j``, so by Ville's inequality
+    ``P(exists t: E_t(k) >= 1/beta) <= beta`` against *each* in-bank competitor,
+    whatever its prior weight. (Each ``p_j`` marginalises ``H_j``'s own seeds,
+    so "under ``H_j``" means a seed drawn from the bank's prior within ``j``.)
+    The chance of declaring *some* wrong hypothesis is at most ``(K-1) beta`` by
+    the union bound. We declare the ``argmax_k E_t(k)`` once it crosses
+    ``1/beta``.
+
+    ``against="mixture"`` restores the older, faster-stopping e-value against the
+    prior-weighted mixture of competitors,
+    ``p_k / sum_{j != k} rho_j p_j`` with ``rho_j = pi_0(j) / (1 - pi_0(k))``,
+    whose ``beta`` bound holds only when the truth is drawn from that mixture;
+    against one competitor ``j`` it weakens to ``beta / rho_j``.
     """
 
     name = "eprocess"
 
-    def __init__(self, beta: float = 0.05):
+    def __init__(self, beta: float = 0.05, against: str = "max"):
         if not 0.0 < beta < 1.0:
             raise ValueError("beta must be in (0, 1)")
+        if against not in ("max", "mixture"):
+            raise ValueError("against must be 'max' or 'mixture'")
         self.beta = float(beta)
+        self.against = against
         self.log_threshold = float(np.log(1.0 / beta))
 
     def log_evalues(self, log_prior: np.ndarray, cum_loglik: np.ndarray) -> np.ndarray:
@@ -89,11 +99,14 @@ class EProcess(StoppingRule):
         log_e = np.full(K, -np.inf)
         for k in range(K):
             mask = np.arange(K) != k
-            # rho_j = pi_0(j) / (1 - pi_0(k)); in log: log_prior[j] - log(1-pi0_k)
-            log_pi0_k = log_prior[k]
-            log_1m = np.log1p(-min(np.exp(log_pi0_k), 1 - 1e-12))
-            log_rho = log_prior[mask] - log_1m
-            denom = logsumexp(log_rho + cum_loglik[mask])
+            if self.against == "max":
+                denom = np.max(cum_loglik[mask])
+            else:
+                # rho_j = pi_0(j) / (1 - pi_0(k)); in log: log_prior[j] - log(1-pi0_k)
+                log_pi0_k = log_prior[k]
+                log_1m = np.log1p(-min(np.exp(log_pi0_k), 1 - 1e-12))
+                log_rho = log_prior[mask] - log_1m
+                denom = logsumexp(log_rho + cum_loglik[mask])
             log_e[k] = cum_loglik[k] - denom
         return log_e
 

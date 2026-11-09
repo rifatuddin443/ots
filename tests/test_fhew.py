@@ -227,6 +227,35 @@ def test_eprocess_threshold_logic():
     assert not rule.decide(log_prior, np.zeros(3)).stop
 
 
+def test_eprocess_max_denominator_ignores_competitor_prior():
+    # H2 nearly ties H0 but has a tiny prior: the mixture e-value discounts it and
+    # stops, the max-competitor e-value does not.
+    log_prior = np.log(np.array([0.10, 0.89, 0.01]))
+    cum = np.array([5.0, 0.0, 4.5])
+    assert EProcess(beta=0.05, against="mixture").decide(log_prior, cum).stop
+    d = EProcess(beta=0.05).decide(log_prior, cum)
+    assert not d.stop and d.score == pytest.approx(0.5)
+
+
+def test_eprocess_per_competitor_false_id_bound():
+    # Truth H0 = fair coin; H1, H2 are biased coins. Each wrong hypothesis is
+    # ever declared over the truth with probability <= beta (Ville).
+    beta, runs, steps = 0.1, 400, 150
+    rng = np.random.default_rng(3)
+    rule = EProcess(beta=beta)
+    log_prior = np.log(np.full(3, 1 / 3))
+    q = np.array([0.5, 0.6, 0.7])
+    crossed = np.zeros(3)
+    for _ in range(runs):
+        x = rng.random(steps) < 0.5
+        cum = np.cumsum(np.where(x[:, None], np.log(q), np.log1p(-q)), axis=0)
+        hit = np.zeros(3, dtype=bool)
+        for t in range(steps):
+            hit |= rule.log_evalues(log_prior, cum[t]) >= rule.log_threshold
+        crossed += hit
+    assert crossed[1] / runs <= beta and crossed[2] / runs <= beta
+
+
 # =========================================== 4. information-parity audit (§11)
 def _bank_parity(sensor, window=T):
     ch = ChannelSet.of_size(M)
