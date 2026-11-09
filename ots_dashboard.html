@@ -2674,6 +2674,7 @@ window.OTS = (function () {
 .ctl-algo.on::after { content: ""; position: absolute; right: 9px; top: 10px; width: 8px; height: 8px; border-radius: 50%; background: #ff5d5d; box-shadow: 0 0 8px #ff5d5d; animation: blink 1.1s infinite; }
 .ctl-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--grid); }
 .ctl-transport .grow { flex: 1; }
+.ctl-run { white-space: nowrap; min-width: 116px; justify-content: center; }
 .ctl-clock { font: 500 12px/1 var(--mono); color: var(--muted); letter-spacing: 0.08em; white-space: nowrap; }
 .ctl-clock b { font: 700 20px/1 var(--mono); color: var(--ink); }
 
@@ -2780,6 +2781,11 @@ window.OTS = (function () {
   // selectable maximum: a confident call (kappa->1) collapses to one spot tone, an
   // unsure one (kappa->0) opens out to `max`. Mirrors fhew.allocator.tones_from_confidence.
   const tonesFor = (kappa, max) => clamp(Math.round(1 + (max - 1) * (1 - clamp(kappa || 0, 0, 1))), 1, max);
+  // The system calls ONE channel only when it is sure of it. Below this probability on
+  // its top channel it calls a barrage instead: at least two channels together, up to
+  // the "max transmit freqs" control. The barrage is both what the jammer lights and
+  // what the next-hop accuracy scores (a hit = the true channel is in the barrage).
+  const SURE_P = 0.9;
 
   // ================================================================ state
   // Module level, so a session survives switching to another page and back.
@@ -2879,13 +2885,23 @@ window.OTS = (function () {
     S.playing = true; refresh(); schedule(0);
   }
   function pause() { S.playing = false; clearTimeout(S.timer); }
-  /** Pressing an algorithm puts the radio on air with it (switching if it was on another). */
+  /** Run / pause the hops. Every run control (the hop card, the settings panel, Space) uses this. */
+  function toggleRun() { if (S.playing) { pause(); refresh(); } else play(); }
+  /** Labels and enables a run/pause button from the run state. */
+  function syncRun(btn) {
+    btn.textContent = S.playing ? "❚❚ Pause" : (S.recs.length && !done() ? "▶ Resume" : "▶ Run");
+    btn.disabled = !S.algo || done() || !OTS.live;
+    btn.title = (S.playing ? "Pause the hops" : "Run the hops") + " (Space)";
+  }
+  /** Pressing an algorithm puts the radio on air with it (switching if it was on another).
+   *  A run the user paused stays paused: only the first algorithm of a session starts it. */
   async function pressAlgo(id) {
     if (!OTS.live || S.creating || !algoAvailable(id)) return;
     S.error = null;
     if (!S.sess || done() || (cfgChanged() && !S.recs.length) ) { if (!(await newSession())) return; }
+    const firstOnAir = !S.algo;
     S.algo = id;
-    if (!S.playing) play(); else refresh();
+    if (firstOnAir && !S.playing) play(); else refresh();
   }
   function stepOnce() {
     if (!S.algo) { S.error = "Press an algorithm first to put the radio on air."; refresh(); return; }
@@ -2893,33 +2909,48 @@ window.OTS = (function () {
   }
 
   // ================================================================ derived
-  /** Running hit statistics over records [from, to). */
-  function hits(from = 0, to = S.recs.length) {
+  /** Hit tally over records [from, to), where hitOf(i) is true, false or null (no call). */
+  function tally(hitOf, from, to) {
     let n = 0, h = 0;
-    for (let i = from; i < to; i++) { const r = S.recs[i]; if (r.hit == null) continue; n++; if (r.hit) h++; }
+    for (let i = from; i < to; i++) { const x = hitOf(i); if (x == null) continue; n++; if (x) h++; }
     return { n, h, rate: n ? h / n : null };
   }
+  /** Next-hop accuracy over records [from, to), scored on the barrage the system called. */
+  function hits(from = 0, to = S.recs.length) { return tally(barrageHit, from, to); }
+  /** The strict measure, kept alongside: did the single top-1 channel match? */
+  function top1(from = 0, to = S.recs.length) { return tally((i) => S.recs[i].hit, from, to); }
   /** Ceiling on transmit freqs: the user's max, capped by the channel count. */
   function jamCap() {
     const base = S.sess && !cfgChanged() ? (S.sess.jam_cap || JAM_CAP_MAX) : Math.min(S.cfg.M, JAM_CAP_MAX);
     return clamp(base, 1, JAM_CAP_MAX);
   }
-  /** Channels the jammer lights for record r: the top-n of its forecast ranking,
-   *  n chosen from confidence (unsure spreads wider), capped by the max control. */
+  /** How many channels the system calls together for the hop after record r. Sure
+   *  (top-1 >= SURE_P) -> one channel, spot. Unsure -> a barrage of at least two,
+   *  growing with the uncertainty up to `max` (the "max transmit freqs" control). */
+  function barrageSize(r, max) {
+    const cap = clamp(max, 1, JAM_CAP_MAX);
+    if (cap < 2 || r.next_p >= SURE_P) return 1;
+    return clamp(tonesFor(r.kappa, cap), 2, cap);
+  }
+  /** The barrage for the hop after record r: the top-n of its forecast ranking. The
+   *  jammer lights exactly these channels, and they are the system's call. */
   function litTones(r) {
     if (!r || !r.jam || !r.jam.length) return [];
-    return r.jam.slice(0, tonesFor(r.kappa, Math.min(maxTones, jamCap())));
+    return r.jam.slice(0, barrageSize(r, Math.min(maxTones, jamCap())));
   }
-  /** Multi-tone coverage over [from,to): did a lit tone cover the true NEXT channel? */
-  function jamStats(from = 0, to = S.recs.length) {
-    let n = 0, c = 0, tones = 0;
-    for (let i = from; i < to - 1; i++) {          // needs the following hop's truth
-      const r = S.recs[i]; if (!r.jam) continue;
-      const lit = litTones(r); n++; tones += lit.length;
-      if (lit.includes(S.recs[i + 1].truth)) c++;
-    }
-    return { n, covered: c, rate: n ? c / n : null, meanTones: n ? tones / n : 0 };
+  /** The system's call for hop h (1-based): the barrage made from the forecast after
+   *  hop h-1. Hop 1 has no forecast yet, so it has no call. */
+  function callFor(h) { return h >= 2 && S.recs[h - 2] ? litTones(S.recs[h - 2]) : []; }
+  /** Did hop i+1 (record i) land in the barrage called for it? null = no call. */
+  function barrageHit(i) { return i < 1 ? null : callFor(i + 1).includes(S.recs[i].truth); }
+  /** Average barrage size over the hops that have a call. */
+  function meanBarrage() {
+    let n = 0, s = 0;
+    for (let h = 2; h <= S.recs.length; h++) { const c = callFor(h); if (c.length) { n++; s += c.length; } }
+    return n ? s / n : 0;
   }
+  /** Chance of a barrage hit by guessing: the average barrage over the channel count. */
+  function barrageChance() { const M = S.sess ? S.sess.channels : S.cfg.M, b = meanBarrage(); return (b || 1) / M; }
   /** Transmitter regimes from the records: [{algo, start (0-based index), end (exclusive), regime}]. */
   function regimes() {
     const out = [];
@@ -2983,19 +3014,15 @@ window.OTS = (function () {
     root.append(svg("line", { x1: nx, x2: nx, y1: m.t, y2: m.t + ih, stroke: "rgba(34, 211, 238, 0.35)", "stroke-dasharray": "3 3" }));
     root.append(svg("text", { class: "nx-t", x: nx + colW / 2, y: m.t - 22, "text-anchor": "middle" }, "NEXT"));
     const ringR = Math.max(4.5, Math.min(colW, rowH) * 0.42), dotR = clamp(Math.min(colW, rowH) * 0.2, 1.8, 3.8);
-    const acc = OTS.tok("accent"), bad = OTS.tok("serious"), det = OTS.tok("det");
+    const acc = OTS.tok("accent"), bad = OTS.tok("serious"), det = OTS.tok("det"), jamCol = OTS.tok("warning");
+    // a barrage: the top channel carries the ring, the extra channels an amber bar each
+    const barBar = (ch, x0, opacity) => svg("rect", { x: x0 + colW * 0.18, y: cy(ch) - rowH * 0.3, width: colW * 0.64, height: Math.max(3, rowH * 0.6), rx: 2, fill: jamCol, opacity });
     let nextLit = [];
     const showNext = end >= 1 && (end < t || !done());   // a hop after the last shown exists
     if (showNext) {
       const r = recs[end - 1];
       nextLit = litTones(r);
-      const jamCol = OTS.tok("warning");
-      // the extra transmit frequencies the jammer opens when unsure (the top-1 keeps
-      // the cyan call ring below); more bars = lower confidence, up to the max control
-      nextLit.forEach((ch, i) => {
-        if (i === 0) return;
-        root.append(svg("rect", { x: nx + colW * 0.18, y: cy(ch) - rowH * 0.3, width: colW * 0.64, height: Math.max(3, rowH * 0.6), rx: 2, fill: jamCol, opacity: 0.55 }));
-      });
+      nextLit.forEach((ch, i) => { if (i > 0) root.append(barBar(ch, nx, 0.55)); });
       root.append(svg("circle", { cx: nx + colW / 2, cy: cy(r.next), r: ringR, fill: "rgba(34, 211, 238, 0.18)", stroke: acc, "stroke-width": 2 }));
       if (nextLit.length > 1) root.append(svg("text", { class: "nx-t", x: nx + colW / 2, y: m.t - 8, "text-anchor": "middle", fill: jamCol }, `jam ×${nextLit.length}`));
     }
@@ -3022,9 +3049,13 @@ window.OTS = (function () {
       // bands: system's belief (faded until locked) and the transmitter's algorithm
       g.append(svg("rect", { x: x0 + 0.5, y: yId, width: colW - 1, height: 9, rx: 2, fill: familyColor(r.id.label), opacity: r.id.locked ? 1 : 0.35 }));
       g.append(svg("rect", { x: x0 + 0.5, y: yTx, width: colW - 1, height: 9, rx: 2, fill: algoColor(r.algo) }));
-      if (r.call != null) {
-        g.append(svg("circle", { cx: x, cy: cy(r.call), r: ringR, fill: "none", stroke: r.hit ? acc : bad, "stroke-width": 2, opacity: r.hit ? 1 : 0.85 }));
-        if (r.hit) seen.hit = true; else seen.miss = true;
+      const bar = callFor(h);   // the barrage called for this hop (empty for hop 1)
+      if (bar.length) {
+        const caught = bar.includes(r.truth);
+        bar.slice(1).forEach((ch) => g.append(barBar(ch, x0, 0.55)));
+        g.append(svg("circle", { cx: x, cy: cy(bar[0]), r: ringR, fill: "none", stroke: caught ? acc : bad, "stroke-width": 2, opacity: caught ? 1 : 0.85 }));
+        if (caught) seen.hit = true; else seen.miss = true;
+        if (bar.length > 1) seen.jam = true;
       }
       if (truthOn && !r.dets.includes(r.truth)) {
         g.append(svg("circle", { cx: x, cy: cy(r.truth), r: dotR + 2, fill: "none", stroke: "rgba(200, 215, 235, 0.8)", "stroke-width": 1.3, "stroke-dasharray": "2 2" }));
@@ -3072,13 +3103,19 @@ window.OTS = (function () {
       { value: r.dets.length ? r.dets.map(fmt.ch).join(", ") : "none", label: "sensor detected" },
       { value: fmt.ch(r.truth), label: r.dets.includes(r.truth) ? "true channel" : "true channel · missed" },
     ];
-    if (r.call != null) rows.push({ value: fmt.ch(r.call), label: `system's call · ${sure(r.call_p)} sure · ${r.hit ? "✓ right" : "✗ wrong"}` });
+    const bar = callFor(r.hop);                  // the barrage the system called for this hop
+    if (bar.length) {
+      const caught = bar.includes(r.truth);
+      rows.push({ value: bar.map(fmt.ch).join(", "),
+        label: `system's call · ${bar.length} channel${bar.length === 1 ? "" : "s"}${bar.length > 1 ? " barrage" : ""} · top ${fmt.ch(bar[0])} ${sure(r.call_p)} sure · ${caught ? "✓ caught it" : "✗ missed"}`,
+        color: caught ? OTS.tok("accent") : OTS.tok("serious"), kind: "square" });
+    }
     const lit = litTones(r);
     if (lit.length) {
       const nextR = S.recs[r.hop];                 // the hop this jam plans to deny
       const caught = nextR ? lit.includes(nextR.truth) : null;
       rows.push({ value: lit.map(fmt.ch).join(", "),
-        label: `jam → next hop · ${lit.length} freq${lit.length === 1 ? "" : "s"}${lit.length > 1 ? " (unsure → spread)" : " (confident → spot)"}`
+        label: `jam → next hop · ${lit.length} freq${lit.length === 1 ? "" : "s"}${lit.length > 1 ? " (unsure → barrage)" : " (sure → spot)"}`
           + (caught == null ? "" : caught ? " · ✓ caught it" : " · ✗ missed"),
         color: OTS.tok("warning"), kind: "square" });
     }
@@ -3089,11 +3126,11 @@ window.OTS = (function () {
   function hopLegend(box, seen) {
     const items = [];
     if (seen.dot) items.push({ label: OTS.prefs.truth ? "Real detection" : "Sensor detection", color: OTS.tok("det"), kind: "dot" });
-    if (seen.hit) items.push({ label: "System's call · right", kind: "ring" });
-    if (seen.miss) items.push({ label: "System's call · wrong", color: OTS.tok("serious"), kind: "square" });
+    if (seen.hit) items.push({ label: "System's barrage · caught it", kind: "ring" });
+    if (seen.miss) items.push({ label: "System's barrage · missed", color: OTS.tok("serious"), kind: "square" });
     if (seen.ghost) items.push({ label: "Ghost (false alarm)", kind: "x" });
     if (seen.lost) items.push({ label: "Missed hop (true channel)", kind: "hollow" });
-    if (seen.jam) items.push({ label: "Extra jam freqs (unsure)", color: OTS.tok("warning"), kind: "square" });
+    if (seen.jam) items.push({ label: "Extra barrage channels (unsure)", color: OTS.tok("warning"), kind: "square" });
     OTS.clear(box).append(items.length ? OTS.chart.legend(items) : "");
   }
 
@@ -3119,9 +3156,9 @@ window.OTS = (function () {
       root.append(svg("line", { class: "ax", x1: m.l, x2: m.l + iw, y1: ya(v), y2: ya(v), opacity: v === 0 ? 1 : 0.35 }));
       root.append(svg("text", { class: "ax-t", x: m.l - 6, y: ya(v) + 4, "text-anchor": "end" }, Math.round(v * 100) + "%"));
     }
-    const chance = 1 / (S.sess ? S.sess.channels : S.cfg.M);
+    const chance = barrageChance();
     root.append(svg("line", { x1: m.l, x2: m.l + iw, y1: ya(chance), y2: ya(chance), stroke: "rgba(232, 238, 247, 0.5)", "stroke-dasharray": "5 4" }));
-    root.append(svg("text", { class: "ax-t", x: m.l + iw - 4, y: ya(chance) - 4, "text-anchor": "end" }, "random"));
+    root.append(svg("text", { class: "ax-t", x: m.l + iw - 4, y: ya(chance) - 4, "text-anchor": "end" }, "random barrage"));
     for (const v of niceHops(H0, iw)) {
       root.append(svg("line", { class: "ax", x1: xh(v) + wh / 2, x2: xh(v) + wh / 2, y1: yAcc + accH, y2: yAcc + accH + 4 }));
       root.append(svg("text", { class: "ax-t", x: xh(v) + wh / 2, y: yAcc + accH + 17, "text-anchor": "middle" }, String(v)));
@@ -3238,13 +3275,13 @@ window.OTS = (function () {
     }
     if (lastTx && lastTx.regime && lastTx.regime.secret) kv.push(["True secret", el("span", { class: "mono" }, lastTx.regime.secret)]);
     const carrier = { bank: "the identified expert", context_mixing: "the universal learner (context mixing)", phase_space: "the phase-space predictor", recurrence: "the recurrence learner (fits a modular linear rule)" }[id.carrier] || id.carrier;
-    kv.push(["Predicting", done() ? "session finished" : [el("b", {}, `channel ${fmt.ch(r.next)}`), ` next · ${sure(r.next_p)} sure`]]);
+    kv.push(["Predicting", done() ? "session finished" : [el("b", {}, `channel ${fmt.ch(r.next)}`), ` top · ${sure(r.next_p)} sure`]]);
     kv.push(["Carried by", carrier]);
     if (!done()) {
       const lit = litTones(r), n = lit.length, cap = Math.min(maxTones, jamCap());
-      kv.push(["Jamming next", [
-        el("b", {}, `${n} frequenc${n === 1 ? "y" : "ies"}`),
-        n > 1 ? ` · unsure, spread (max ${cap})` : " · confident, spot",
+      kv.push(["Barrage next", [
+        el("b", {}, `${n} channel${n === 1 ? "" : "s"} together`),
+        n > 1 ? ` · unsure, barrage (max ${cap})` : " · sure, one channel",
         el("div", { class: "ctl-tones" }, lit.map((c, i) => el("span", { class: "ctl-tone" + (i === 0 ? " lead" : "") }, fmt.ch(c)))),
       ]]);
     }
@@ -3283,7 +3320,7 @@ window.OTS = (function () {
       }
       prev = r;
     }
-    if (done()) out.push({ hop: S.recs.length, color: OTS.tok("muted"), parts: ["Session finished: ", el("b", {}, `${hits().h} of ${hits().n}`), " next hops called right"] });
+    if (done()) out.push({ hop: S.recs.length, color: OTS.tok("muted"), parts: ["Session finished: ", el("b", {}, `${hits().h} of ${hits().n}`), " hops caught by the barrage"] });
     return out.reverse();
   }
   function renderLog(box) {
@@ -3365,7 +3402,7 @@ window.OTS = (function () {
       sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
       sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
       sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
-      sec("Jammer · max transmit freqs", jamBox, jamHelp),
+      sec("Barrage · max transmit freqs", jamBox, jamHelp),
       sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
       sec("Show on the chart", toggles.map((x) => x.node),
         el("div", { class: "ctl-help" }, "The system never sees these: they are drawn for you.")));
@@ -3381,8 +3418,11 @@ window.OTS = (function () {
       jamInp.max = cap;
       if (document.activeElement !== jamInp) jamInp.value = mt;
       jamVal.textContent = String(mt);
-      OTS.clear(jamHelp).append("When the system is unsure it spreads the jam across up to ",
-        el("b", {}, String(mt)), ` frequenc${mt === 1 ? "y" : "ies"}; a confident call uses one. Capped at ${cap} for ${S.cfg.M} channels.`);
+      OTS.clear(jamHelp).append(...(mt >= 2
+        ? ["When the system is unsure of its top channel (under ", el("b", {}, `${Math.round(SURE_P * 100)}%`),
+          ") it calls a barrage of ", el("b", {}, `2 to ${mt}`), " channels together; a sure call is one channel."]
+        : ["The system calls one channel at a time."]),
+        ` Capped at ${cap} for ${S.cfg.M} channels.`);
       const s = sensorOf(S.cfg), ghosts = s.p_fa * (S.cfg.M - 1);
       const hk = [s.p_d, s.p_fa, S.cfg.M].join("|");
       if (hk !== helpKey) {
@@ -3417,7 +3457,7 @@ window.OTS = (function () {
           return b;
         }))));
     }
-    const playBtn = el("button", { class: "btn primary", onclick: () => (S.playing ? (pause(), refresh()) : play()) });
+    const playBtn = el("button", { class: "btn primary", onclick: toggleRun });
     const stepBtn = el("button", { class: "btn", onclick: stepOnce, title: "Advance one hop (→)" }, "›› 1 hop");
     const chip = el("button", { class: "chip ctl-chip", onclick: openPanel, title: "Open the settings panel (S)" });
     const clockN = el("b", { class: "num" }), clockT = document.createTextNode("");
@@ -3433,8 +3473,7 @@ window.OTS = (function () {
         b.setAttribute("aria-pressed", on ? "true" : "false");
         small.textContent = on ? (S.playing ? "on air" : "on air · paused") : ok ? e.kind : "needs 2ⁿ channels";
       }
-      playBtn.textContent = S.playing ? "❚❚ Pause" : "▶ Run";
-      playBtn.disabled = !S.algo || done() || !OTS.live;
+      syncRun(playBtn);
       stepBtn.disabled = !S.algo || done() || !OTS.live;
       const s = sensorOf(S.cfg), sp = SPEEDS.find((x) => x.v === S.speed);
       if (!inPanel) chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
@@ -3445,19 +3484,17 @@ window.OTS = (function () {
     };
   }
   function renderAcc(box) {
-    const all = hits(), lastSw = [...S.recs].reverse().find((r) => r.switched);
+    const all = hits(), top = top1(), lastSw = [...S.recs].reverse().find((r) => r.switched);
     const since = lastSw ? hits(lastSw.hop - 1) : { n: 0, h: 0, rate: null };
-    const M = S.sess ? S.sess.channels : S.cfg.M;
+    const chance = barrageChance(), avg = meanBarrage();
     OTS.clear(box).append(
-      el("span", { class: "ctl-acc-l" }, "Next-hop prediction"),
-      el("span", { class: "ctl-acc-v" }, all.n ? [el("b", {}, `${all.h} of ${all.n}`), " right · ", pct(all.rate)] : "no calls yet"),
+      el("span", { class: "ctl-acc-l" }, "Next-hop barrage"),
+      el("span", { class: "ctl-acc-v" }, all.n ? [el("b", {}, `${all.h} of ${all.n}`), " hit · ", pct(all.rate)] : "no calls yet"),
+      el("span", { class: "ctl-acc-s" }, all.n ? `exact top-1: ${top.h} of ${top.n} (${pct(top.rate)}) · barrage avg ${avg.toFixed(1)} channels` : ""),
       el("span", { class: "ctl-acc-s" }, lastSw && lastSw.hop > 1 && since.n ? `since your last switch: ${since.h} of ${since.n} (${pct(since.rate)})` : ""),
-      el("div", { class: "ctl-acc-bar", title: `random guessing: 1 in ${M}` }, el("i", { style: `width:${((all.rate || 0) * 100).toFixed(1)}%` }), el("em", { style: `left:${(100 / M).toFixed(2)}%` })),
-      el("span", { class: "ctl-acc-s" }, `random guessing: 1 in ${M} (${pct(1 / M)})`),
-      (() => { const js = jamStats(); const cap = Math.min(maxTones, jamCap());
-        return el("span", { class: "ctl-acc-s" }, js.n
-          ? `multi-tone jam (≤${cap} freq${cap === 1 ? "" : "s"}) covers ${pct(js.rate)} of next hops · avg ${js.meanTones.toFixed(1)} lit`
-          : ""); })());
+      el("div", { class: "ctl-acc-bar", title: `random guessing of a barrage this size: ${pct(chance)}` },
+        el("i", { style: `width:${((all.rate || 0) * 100).toFixed(1)}%` }), el("em", { style: `left:${(chance * 100).toFixed(2)}%` })),
+      el("span", { class: "ctl-acc-s" }, `random guessing: ${pct(chance)}`));
   }
 
   function offline() {
@@ -3479,12 +3516,15 @@ window.OTS = (function () {
       injectCss();
       const note = el("div");
       const panel = el("aside", { class: "ctl-panel", "aria-label": "Control room settings" }), tx = el("div", { class: "ctl-txpanel" });
-      const acc = el("div", { class: "card ctl-acc", "aria-label": "Next-hop prediction accuracy" });
+      const acc = el("div", { class: "card ctl-acc", "aria-label": "Next-hop barrage accuracy" });
       const hopLegendBox = el("div", { style: "min-height:26px" }), hopBox = el("div", { class: "ctl-hop" });
       const scrubBox = el("div", { class: "ctl-scrub", "aria-label": "Scroll back through past hops" });
+      // the run/pause control sits on the chart itself, so the hops can be stopped at a glance
+      const runBtn = el("button", { class: "btn primary ctl-run", onclick: toggleRun, "aria-label": "Run or pause the hops" });
       const hopCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
         el("p", { class: "card-t" }, "Hop chart"),
-        el("p", { class: "card-k" }, "Rings are the system's calls, made before each hop"))), hopLegendBox, hopBox, scrubBox,
+        el("p", { class: "card-k" }, "Rings are the system's barrage, made before each hop; amber bars are its extra channels")), runBtn),
+        hopLegendBox, hopBox, scrubBox,
         el("div", { class: "card-foot" }, "Top band: what the system thinks (faded until it locks). Bottom band: what the transmitter really runs. The system never sees the truth overlays."));
       const tlBox = el("div", { class: "ctl-tl" });
       const tlCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
@@ -3539,7 +3579,7 @@ window.OTS = (function () {
         if (document.activeElement !== scrubInput) scrubInput.value = en;
         scrubLatest.disabled = viewEnd == null || t < 2;
         scrubLabel.textContent = !t ? "no hops yet"
-          : viewEnd != null ? `viewing up to hop ${en} of ${t} — paused`
+          : viewEnd != null ? `viewing up to hop ${en} of ${t} (scrolled back)`
           : `following the latest hop (${t})`;
       }
       const updatePanel = makePanel(panel, () => setOpen(false)), updateTx = makeTx(tx, () => setOpen(true), true);
@@ -3549,7 +3589,7 @@ window.OTS = (function () {
         render() {
           note.hidden = OTS.live;
           if (!OTS.live && !note.firstChild) note.append(offline());
-          updatePanel(); updateTx(); renderAcc(acc); renderCharts(); updateScrub();
+          updatePanel(); updateTx(); syncRun(runBtn); renderAcc(acc); renderCharts(); updateScrub();
           renderSystem(sys); renderLog(logBox); renderTable(tableBox);
           const sw = S.recs.filter((r) => r.switch_detected).length;
           if (sw > lastSwitch) { sys.classList.remove("ctl-flash"); void sys.offsetWidth; sys.classList.add("ctl-flash"); }
@@ -3559,7 +3599,7 @@ window.OTS = (function () {
       lastSwitch = S.recs.filter((r) => r.switch_detected).length;
       const onKey = (e) => {
         if ((e.target instanceof Element && e.target.matches("input, select, textarea")) || e.metaKey || e.ctrlKey || e.altKey) return;
-        if (e.key === " ") { e.preventDefault(); if (S.playing) { pause(); refresh(); } else play(); }
+        if (e.key === " ") { e.preventDefault(); toggleRun(); }
         else if (e.key === "ArrowRight") stepOnce();
         else if (e.key.toLowerCase() === "t") OTS.setPref("truth", !OTS.prefs.truth);
         else if (e.key.toLowerCase() === "s") setOpen(!panelOpen);

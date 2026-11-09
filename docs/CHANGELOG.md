@@ -11,6 +11,32 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-09 — Control room: run/pause on the chart, barrage calls when unsure
+
+Two fixes to the Control room (`dashboard/views/control.js`, standalone rebuilt):
+- **Run / Pause on the hop chart.** The run control was only in the settings
+  panel, which is closed on many layouts, so the hops could not be stopped at a
+  glance. A `❚❚ Pause` / `▶ Resume` button now sits in the hop-chart header. It
+  shares one `toggleRun()` with the panel button and Space. Pressing an algorithm
+  while paused switches the radio but leaves the run paused; only the first
+  algorithm of a session starts it.
+- **Barrage, not one channel, when unsure.** The system called a single channel
+  even at 36% sure, so every miss on that one channel scored as wrong. Now: when the top channel is under
+  90% (`SURE_P`) the system calls a barrage of at least two channels together,
+  growing with uncertainty up to the "max transmit freqs" control (default 3). A
+  sure call stays one channel (spot). The jammer lights exactly the barrage, the
+  hop chart draws it (ring = top channel, amber bars = extras), and the tooltip
+  and system view name it.
+- **Accuracy scores the barrage.** A next-hop hit is "true channel ∈ barrage".
+  The exact top-1 rate is shown beside it, and the random baseline is the chance
+  of a barrage of that size. Measured on the real engine (4 plans × 2 sensors,
+  300 hops, 16 channels, max 3): exact top-1 averages **51%**, the barrage
+  **67%**, with an average barrage of 2.0 channels.
+
+Checks: all 131 tests pass; a headless browser run confirmed pause stops the
+hop counter, Space resumes, switching while paused stays paused, and every
+sampled unsure call (top-1 under 90%) shows 2–3 channels.
+
 ## 2026-10-31 — Control room: scrubbable hop chart, transmitter in the side panel
 
 UI refinements to the Control room (`dashboard/views/control.js`):
