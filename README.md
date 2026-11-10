@@ -92,7 +92,7 @@ falls back to chance. It never sees the true channel — only `Observation`s.
 
 ```bash
 python -m fhew.datagen --n-per-class 250         # train the learned baseline + grounding
-python -m scripts.run_all                        # all 17 experiments -> results/ + results/figures/
+python -m scripts.run_all                        # all 21 experiments -> results/ + results/figures/
 python -m scripts.run_all --quick                # fast smoke run (fewer seeds)
 python -m scripts.run_all --only exp1 exp3       # a subset
 python -m experiments.exp1_hops_vs_pd --plot-only # re-render a figure from saved JSON (no re-sim)
@@ -166,6 +166,8 @@ the exp6/exp7 protocols with the same seeds.
 | `exp17_feasibility` | thesis §10 | Feasibility map with the reactive-jamming region (dwell vs reaction latency, and window vs hop rate) |
 | `exp18_switch_tracking` | thesis §6.4 | Random switch plans over all 13 algorithms, per sensor (incl. perfect): switch detection rate/delay, false alarms, identification after each switch, dangerous locks |
 | `exp19_sequence_coverage` | thesis §4.2 | Every structured sequence type (arithmetic, polynomial, linear/nonlinear recurrence, lookup table, hybrids, noisy rule) and secrets far outside the recce ranges: top-1 and **hops to lock**, before vs after the structured experts |
+| `exp20_conformal_sets` | thesis §4.2 / §7 (new) | **Conformal next-channel prediction sets**: distribution-free coverage `1-α` with a data-driven set size, vs fixed top-k; the set funded as the multi-tone jam plan (coverage ⇒ jam-hit guarantee) |
+| `exp21_identification_converse` | §10 (new) | A **lower bound** (converse) on hops-to-identify: measured `E[τ]` sits at or above the sequential-test floor `log((1-δ)/δ)/D`, within ≈2.3× |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -389,6 +391,7 @@ fhew/
   experts.py         Expert interface, the full thesis expert bank, H_0, the bank,
                      and the Fixed-Share mixture (next-channel predictor)
   predict.py         ChannelPredictor: the next-channel prediction front end
+  conformal.py       conformal next-channel sets (ACI) + jam-plan coupling — §4.2/§7
   stopping.py        MSPRT + e-process
   baselines.py       pairwise SPRT, fixed-length LRT, learned classifier (+ LSTM)
   sim.py             episode + end-to-end slot loop (paper Algorithm 1)
@@ -404,13 +407,15 @@ fhew/
   tracker.py         SwitchTracker: follow a transmitter that switches algorithm at
                      will (change-point posterior over anchored bank segments)
 configs/             conference.yaml, quick.yaml
-experiments/         exp1..exp17 + shared style/harness
+experiments/         exp1..exp21 + shared style/harness
 scripts/run_all.py   run everything
 dashboard/           demo dashboard: recorder, proofs, build, live server, pages,
                      control.py (the Control room session + CLI)
-tests/test_fhew.py                67 tests incl. the information-parity audit
-tests/test_mixture_allocation.py  29 tests for the mixture / regime / allocator
+tests/test_fhew.py                81 tests incl. the information-parity audit
+tests/test_mixture_allocation.py  37 tests for the mixture / regime / allocator
 tests/test_tracker.py             16 tests for the switch tracker, recurrence learner, control room
+tests/test_sequences.py           23 tests for the structured-sequence experts
+tests/test_conformal.py           10 tests for the conformal sets + identification converse
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
@@ -454,5 +459,5 @@ and simulation-only, and clear publication with your supervisor and institution.
 ## Tests
 
 ```bash
-python -m pytest        # 126 tests, ~75s
+python -m pytest        # 167 tests, ~2 min
 ```

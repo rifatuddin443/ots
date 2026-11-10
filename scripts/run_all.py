@@ -36,6 +36,8 @@ from experiments import (
     exp17_feasibility,
     exp18_switch_tracking,
     exp19_sequence_coverage,
+    exp20_conformal_sets,
+    exp21_identification_converse,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -62,6 +64,8 @@ EXPERIMENTS = {
     "exp17": exp17_feasibility,
     "exp18": exp18_switch_tracking,
     "exp19": exp19_sequence_coverage,
+    "exp20": exp20_conformal_sets,
+    "exp21": exp21_identification_converse,
 }
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
@@ -169,6 +173,16 @@ def _headline(name: str, r: dict) -> dict:
             return {k: {g: {"before": round(d["before_top1"], 3), "after": round(d["after_top1"], 3),
                             "lock_after": d["after_lock"]} for g, d in per.items()}
                     for k, per in r["sensors"].items()}
+        if name == "exp20":
+            per = r["operating_point"]
+            return {"target_coverage": r["meta"]["target_coverage"],
+                    "calibration_top3": r["calibration"]["top3"],
+                    **{g: {"coverage": d["coverage"], "tones": round(d["mean_set_size"], 2),
+                           "jam_hit": d["jam_hit_rate"]} for g, d in per.items()}}
+        if name == "exp21":
+            return {"efficiency_mean": r["efficiency"]["mean"],
+                    "at_or_above_bound": r["efficiency"]["all_at_or_above_bound"],
+                    "r2_note": "see exp11 for the linear fits"}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}

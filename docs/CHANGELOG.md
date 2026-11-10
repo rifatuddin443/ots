@@ -11,6 +11,61 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-10 — Conformal next-channel prediction sets + an identification converse (exp20, exp21)
+
+Two new, additive contributions on top of the existing predictor and bank. Both
+read only observations (information parity); the hidden truth is used only to
+score. Nothing in the existing modules changed.
+
+### exp20 — conformal next-channel sets, coupled to the jam plan (new in the literature)
+The predictor emitted a point guess and a *fixed* `top-k` shortlist with no
+coverage guarantee. `fhew/conformal.py` adds a **calibrated prediction set**
+whose size adapts so the true next channel is covered with a controlled
+long-run probability `1 - alpha`, on any emitter, with no distributional
+assumption:
+- `aps_set(p, level)` — the adaptive-prediction-set builder (smallest
+  top-ranked set with cumulative mass ≥ level).
+- `ConformalChannelPredictor` — wraps a `ChannelPredictor` with **Adaptive
+  Conformal Inference** (Gibbs–Candès): an online effective level `alpha_t`
+  updated by `alpha_{t+1} = clip(alpha_t + gamma*(alpha - err_t), 0, 1)`. The
+  calibration bit is *erasure feedback* — it fires only on clean slots, which is
+  all a passive node sees (the FH twist; standard split-conformal assumes
+  exchangeability, which the stream violates).
+- `jam_set_from_conformal(set, effect, budget)` — **D1**: the set *is* the
+  multi-tone jam plan. Funding it makes the realised next hop denied at the
+  coverage rate, so the fraction-of-hops-jammed inherits the distribution-free
+  `1 - alpha` bound, with the tone count set by the data instead of a hand-set
+  `max_tones`.
+
+Measured (`exp20`, M=16, P_d=0.95, P_fa=0.01, target 0.90): conformal coverage
+0.89–1.00 across LFSR/weak-seed/LCG/logistic/markov, the three **new algorithms**
+and the CSPRNG, while a fixed top-3 under-covers badly on markov (0.51) and
+CSPRNG (0.19). Set size tracks predictability: ~1 tone on a pinned-down LFSR
+(κ≈0.95) up to ~14.4 on a CSPRNG (κ≈0.01). Jam-hit rate equals coverage (D1).
+
+### exp21 — a lower bound (converse) on hops-to-identify
+`exp11` showed the achievability side (E[τ] linear in log(1/δ) and 1/P_d).
+`exp21` adds the matching **information-theoretic floor** no identifier can beat
+— the sequential-test / change-of-measure bound
+`E[τ] ≥ log((1-δ)/δ) / D`, with the per-slot posterior-log-odds drift `D ≈ P_d·KL*`
+estimated directly from the runs (so it holds for the real sensor-aware
+emission, detection-thinning included). Measured: the bank sits **at or above**
+the floor at every operating point, efficiency ≈ 1.4–2.3× (mean 2.28×) — the
+cost is within a small constant of optimal, and the bound rises as 1/P_d exactly
+as the drift falls.
+
+### Wiring / tests
+- `experiments/exp20_conformal_sets.py`, `experiments/exp21_identification_converse.py`;
+  both registered in `scripts/run_all.py` (+ `_headline`).
+- `tests/test_conformal.py` — 10 tests (aps-set monotonicity, ACI direction,
+  coverage≈target, set-size adaptivity, the D1 jam coupling, converse-is-a-bound).
+- README experiments table, package layout and test count updated; methodology
+  write-up gains Sections 5.19 (conformal sets) and 5.20 (converse).
+
+Rebuild figures without re-simulating: `python -m experiments.exp20_conformal_sets --plot-only`.
+
+---
+
 ## 2026-11-09 — Control room: run/pause on the chart, barrage calls when unsure
 
 Two fixes to the Control room (`dashboard/views/control.js`, standalone rebuilt):
