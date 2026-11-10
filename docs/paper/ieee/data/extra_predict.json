@@ -1,0 +1,313 @@
+{
+  "sensors": {
+    "strong": {
+      "meta": {
+        "M": 16,
+        "window": 120,
+        "n_seeds": 30,
+        "p_d": 0.95,
+        "p_fa": 0.01,
+        "chance": 0.0625,
+        "metric": "next-channel top-1 accuracy"
+      },
+      "operating_point": {
+        "lfsr": {
+          "proposed_top1": 0.9854341736694678,
+          "proposed_steady": 0.9966666666666666,
+          "proposed_top3": 0.992436974789916,
+          "proposed_logloss": 0.07552800731793342,
+          "id_only_steady": 0.9975,
+          "markov_top1": 0.09019607843137253,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "proposed_top1": 0.980672268907563,
+          "proposed_steady": 0.9958333333333333,
+          "proposed_top3": 0.9899159663865547,
+          "proposed_logloss": 0.07683686349661364,
+          "id_only_steady": 0.9975,
+          "markov_top1": 0.06470588235294118,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "proposed_top1": 0.9795518207282913,
+          "proposed_steady": 0.9958333333333333,
+          "proposed_top3": 0.9896358543417367,
+          "proposed_logloss": 0.0783675014740358,
+          "id_only_steady": 0.9966666666666666,
+          "markov_top1": 0.059383753501400564,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "proposed_top1": 0.5529411764705882,
+          "proposed_steady": 0.5616666666666666,
+          "proposed_top3": 0.9420168067226891,
+          "proposed_logloss": 0.979446657080983,
+          "id_only_steady": 0.5624999999999999,
+          "markov_top1": 0.07675070028011204,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "markov": {
+          "proposed_top1": 0.2431372549019608,
+          "proposed_steady": 0.29250000000000004,
+          "proposed_top3": 0.45378151260504207,
+          "proposed_logloss": 2.5255840221723447,
+          "id_only_steady": 0.2891666666666667,
+          "markov_top1": 0.09551820728291313,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "proposed_top1": 0.9504201680672268,
+          "proposed_steady": 0.9975,
+          "proposed_top3": 0.9635854341736695,
+          "proposed_logloss": 0.18676429600988803,
+          "id_only_steady": 0.3833333333333334,
+          "markov_top1": 0.18319327731092436,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "proposed_top1": 0.9593837535014006,
+          "proposed_steady": 0.9974999999999999,
+          "proposed_top3": 0.9703081232492997,
+          "proposed_logloss": 0.1485193200190525,
+          "id_only_steady": 0.8958333333333334,
+          "markov_top1": 0.07759103641456583,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "proposed_top1": 0.4154061624649861,
+          "proposed_steady": 0.4266666666666667,
+          "proposed_top3": 0.8263305322128853,
+          "proposed_logloss": 1.5765722543139706,
+          "id_only_steady": 0.4275,
+          "markov_top1": 0.06190476190476191,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "proposed_top1": 0.07030812324929972,
+          "proposed_steady": 0.06916666666666667,
+          "proposed_top3": 0.1890756302521009,
+          "proposed_logloss": 2.7963050579369852,
+          "id_only_steady": 0.0725,
+          "markov_top1": 0.06750700280112046,
+          "uniform_top1": 0.0625,
+          "group": "control"
+        }
+      }
+    },
+    "typical": {
+      "meta": {
+        "M": 16,
+        "window": 120,
+        "n_seeds": 30,
+        "p_d": 0.8,
+        "p_fa": 0.02,
+        "chance": 0.0625,
+        "metric": "next-channel top-1 accuracy"
+      },
+      "operating_point": {
+        "lfsr": {
+          "proposed_top1": 0.9789915966386555,
+          "proposed_steady": 1.0,
+          "proposed_top3": 0.988795518207283,
+          "proposed_logloss": 0.12147253545887729,
+          "id_only_steady": 1.0,
+          "markov_top1": 0.1084033613445378,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "proposed_top1": 0.9742296918767507,
+          "proposed_steady": 1.0,
+          "proposed_top3": 0.9851540616246499,
+          "proposed_logloss": 0.12394097801182737,
+          "id_only_steady": 0.9991666666666668,
+          "markov_top1": 0.06134453781512606,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "proposed_top1": 0.9742296918767507,
+          "proposed_steady": 0.9991666666666668,
+          "proposed_top3": 0.9851540616246499,
+          "proposed_logloss": 0.12556902983788118,
+          "id_only_steady": 0.9991666666666668,
+          "markov_top1": 0.06274509803921569,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "proposed_top1": 0.5137254901960784,
+          "proposed_steady": 0.525,
+          "proposed_top3": 0.8946778711484595,
+          "proposed_logloss": 1.16396424456994,
+          "id_only_steady": 0.525,
+          "markov_top1": 0.0876750700280112,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "markov": {
+          "proposed_top1": 0.16498599439775904,
+          "proposed_steady": 0.21000000000000002,
+          "proposed_top3": 0.3375350140056022,
+          "proposed_logloss": 2.6786895243575652,
+          "id_only_steady": 0.19,
+          "markov_top1": 0.09523809523809526,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "proposed_top1": 0.8722689075630253,
+          "proposed_steady": 0.935,
+          "proposed_top3": 0.9070028011204483,
+          "proposed_logloss": 0.4675334662479973,
+          "id_only_steady": 0.3266666666666666,
+          "markov_top1": 0.17675070028011206,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "proposed_top1": 0.923249299719888,
+          "proposed_steady": 0.9758333333333334,
+          "proposed_top3": 0.9456582633053221,
+          "proposed_logloss": 0.29056187042088494,
+          "id_only_steady": 0.4975000000000001,
+          "markov_top1": 0.1100840336134454,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "proposed_top1": 0.36414565826330547,
+          "proposed_steady": 0.37583333333333335,
+          "proposed_top3": 0.7341736694677874,
+          "proposed_logloss": 1.7783635265109663,
+          "id_only_steady": 0.3791666666666667,
+          "markov_top1": 0.07366946778711485,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "proposed_top1": 0.06358543417366946,
+          "proposed_steady": 0.065,
+          "proposed_top3": 0.18739495798319333,
+          "proposed_logloss": 2.8013716202392653,
+          "id_only_steady": 0.05500000000000001,
+          "markov_top1": 0.06022408963585434,
+          "uniform_top1": 0.0625,
+          "group": "control"
+        }
+      }
+    },
+    "contested": {
+      "meta": {
+        "M": 16,
+        "window": 120,
+        "n_seeds": 30,
+        "p_d": 0.6,
+        "p_fa": 0.05,
+        "chance": 0.0625,
+        "metric": "next-channel top-1 accuracy"
+      },
+      "operating_point": {
+        "lfsr": {
+          "proposed_top1": 0.9543417366946779,
+          "proposed_steady": 0.9966666666666666,
+          "proposed_top3": 0.973389355742297,
+          "proposed_logloss": 0.24904507308620988,
+          "id_only_steady": 0.9983333333333333,
+          "markov_top1": 0.08907563025210083,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "proposed_top1": 0.9420168067226891,
+          "proposed_steady": 0.9924999999999999,
+          "proposed_top3": 0.9711484593837536,
+          "proposed_logloss": 0.2602773328171247,
+          "id_only_steady": 0.9900000000000001,
+          "markov_top1": 0.0638655462184874,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "proposed_top1": 0.9464985994397759,
+          "proposed_steady": 0.9966666666666666,
+          "proposed_top3": 0.9691876750700281,
+          "proposed_logloss": 0.26218035329594164,
+          "id_only_steady": 0.9966666666666666,
+          "markov_top1": 0.06050420168067227,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "proposed_top1": 0.4030812324929973,
+          "proposed_steady": 0.43833333333333335,
+          "proposed_top3": 0.7422969187675073,
+          "proposed_logloss": 1.7069673937204994,
+          "id_only_steady": 0.44,
+          "markov_top1": 0.07086834733893556,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "markov": {
+          "proposed_top1": 0.08795518207282914,
+          "proposed_steady": 0.09749999999999999,
+          "proposed_top3": 0.23781512605042018,
+          "proposed_logloss": 2.7974804393220967,
+          "id_only_steady": 0.10166666666666667,
+          "markov_top1": 0.07338935574229692,
+          "uniform_top1": 0.0625,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "proposed_top1": 0.3784313725490197,
+          "proposed_steady": 0.42666666666666664,
+          "proposed_top3": 0.5602240896358543,
+          "proposed_logloss": 2.0461420591610913,
+          "id_only_steady": 0.1625,
+          "markov_top1": 0.12857142857142856,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "proposed_top1": 0.6282913165266106,
+          "proposed_steady": 0.6816666666666668,
+          "proposed_top3": 0.7120448179271709,
+          "proposed_logloss": 1.2850354342936308,
+          "id_only_steady": 0.09416666666666666,
+          "markov_top1": 0.07843137254901962,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "proposed_top1": 0.2495798319327731,
+          "proposed_steady": 0.2699999999999999,
+          "proposed_top3": 0.5529411764705882,
+          "proposed_logloss": 2.2508491745466896,
+          "id_only_steady": 0.26333333333333336,
+          "markov_top1": 0.06526610644257703,
+          "uniform_top1": 0.0625,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "proposed_top1": 0.06190476190476191,
+          "proposed_steady": 0.06333333333333332,
+          "proposed_top3": 0.1781512605042017,
+          "proposed_logloss": 2.817062355294942,
+          "id_only_steady": 0.06166666666666666,
+          "markov_top1": 0.0546218487394958,
+          "uniform_top1": 0.0625,
+          "group": "control"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,951 @@
+{
+  "meta": {
+    "M": 16,
+    "window": 160,
+    "n_seeds": 100,
+    "families": [
+      "lfsr",
+      "filtered_lfsr",
+      "lcg",
+      "lcg_full",
+      "weak_seed",
+      "chaos",
+      "markov",
+      "unknown"
+    ],
+    "generators": [
+      "lfsr",
+      "filtered_lfsr",
+      "lcg",
+      "lcg_full",
+      "weak_seed",
+      "logistic",
+      "tent",
+      "henon",
+      "markov",
+      "csprng",
+      "lagged_fib",
+      "quadratic_cg",
+      "sine_map"
+    ],
+    "delta": 0.05
+  },
+  "sensors": {
+    "perfect": {
+      "p_d": 1.0,
+      "p_fa": 0.0,
+      "counts": {
+        "lfsr": {
+          "lfsr": 100,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "filtered_lfsr": {
+          "lfsr": 0,
+          "filtered_lfsr": 100,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 100,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg_full": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 100,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "weak_seed": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 100,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "logistic": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        },
+        "tent": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        },
+        "henon": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 99,
+          "markov": 0,
+          "unknown": 0
+        },
+        "markov": {
+          "lfsr": 1,
+          "filtered_lfsr": 1,
+          "lcg": 0,
+          "lcg_full": 2,
+          "weak_seed": 1,
+          "chaos": 1,
+          "markov": 94,
+          "unknown": 0
+        },
+        "csprng": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 3,
+          "unknown": 97
+        },
+        "lagged_fib": {
+          "lfsr": 1,
+          "filtered_lfsr": 0,
+          "lcg": 2,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 3,
+          "markov": 94,
+          "unknown": 0
+        },
+        "quadratic_cg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 100,
+          "unknown": 0
+        },
+        "sine_map": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        }
+      },
+      "per_generator": {
+        "lfsr": {
+          "target": "lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.01010101010101
+        },
+        "filtered_lfsr": {
+          "target": "filtered_lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.030612244897959
+        },
+        "lcg": {
+          "target": "lcg",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.18
+        },
+        "lcg_full": {
+          "target": "lcg_full",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 8.0
+        },
+        "weak_seed": {
+          "target": "weak_seed",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.03
+        },
+        "logistic": {
+          "target": "chaos",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.31
+        },
+        "tent": {
+          "target": "chaos",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.24
+        },
+        "henon": {
+          "target": "chaos",
+          "accuracy": 0.99,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 5.121212121212121
+        },
+        "markov": {
+          "target": "markov",
+          "accuracy": 0.94,
+          "hard_false_id": 0.05,
+          "n_hard": 5,
+          "mean_hops": 34.638297872340424
+        },
+        "csprng": {
+          "target": "unknown",
+          "accuracy": 0.97,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 82.5
+        },
+        "lagged_fib": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.03,
+          "n_hard": 3,
+          "mean_hops": null
+        },
+        "quadratic_cg": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        },
+        "sine_map": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        }
+      }
+    },
+    "strong": {
+      "p_d": 0.95,
+      "p_fa": 0.01,
+      "counts": {
+        "lfsr": {
+          "lfsr": 100,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "filtered_lfsr": {
+          "lfsr": 0,
+          "filtered_lfsr": 100,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 100,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg_full": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 96,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 4,
+          "unknown": 0
+        },
+        "weak_seed": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 100,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "logistic": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        },
+        "tent": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 99,
+          "markov": 0,
+          "unknown": 0
+        },
+        "henon": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 99,
+          "markov": 0,
+          "unknown": 0
+        },
+        "markov": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 2,
+          "weak_seed": 1,
+          "chaos": 1,
+          "markov": 96,
+          "unknown": 0
+        },
+        "csprng": {
+          "lfsr": 2,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 98
+        },
+        "lagged_fib": {
+          "lfsr": 1,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 3,
+          "markov": 96,
+          "unknown": 0
+        },
+        "quadratic_cg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 100,
+          "unknown": 0
+        },
+        "sine_map": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        }
+      },
+      "per_generator": {
+        "lfsr": {
+          "target": "lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.363636363636363
+        },
+        "filtered_lfsr": {
+          "target": "filtered_lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.377551020408164
+        },
+        "lcg": {
+          "target": "lcg",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 5.28
+        },
+        "lcg_full": {
+          "target": "lcg_full",
+          "accuracy": 0.96,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 16.03125
+        },
+        "weak_seed": {
+          "target": "weak_seed",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.45
+        },
+        "logistic": {
+          "target": "chaos",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 4.86
+        },
+        "tent": {
+          "target": "chaos",
+          "accuracy": 0.99,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 4.828282828282828
+        },
+        "henon": {
+          "target": "chaos",
+          "accuracy": 0.99,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 6.0606060606060606
+        },
+        "markov": {
+          "target": "markov",
+          "accuracy": 0.96,
+          "hard_false_id": 0.03,
+          "n_hard": 3,
+          "mean_hops": 49.583333333333336
+        },
+        "csprng": {
+          "target": "unknown",
+          "accuracy": 0.98,
+          "hard_false_id": 0.02,
+          "n_hard": 2,
+          "mean_hops": null
+        },
+        "lagged_fib": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": null
+        },
+        "quadratic_cg": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        },
+        "sine_map": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        }
+      }
+    },
+    "typical": {
+      "p_d": 0.8,
+      "p_fa": 0.02,
+      "counts": {
+        "lfsr": {
+          "lfsr": 100,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "filtered_lfsr": {
+          "lfsr": 0,
+          "filtered_lfsr": 100,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 100,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg_full": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 51,
+          "weak_seed": 1,
+          "chaos": 1,
+          "markov": 47,
+          "unknown": 0
+        },
+        "weak_seed": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 100,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "logistic": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 99,
+          "markov": 0,
+          "unknown": 0
+        },
+        "tent": {
+          "lfsr": 0,
+          "filtered_lfsr": 4,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 96,
+          "markov": 0,
+          "unknown": 0
+        },
+        "henon": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        },
+        "markov": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 3,
+          "markov": 96,
+          "unknown": 0
+        },
+        "csprng": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 7,
+          "unknown": 93
+        },
+        "lagged_fib": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 1,
+          "markov": 98,
+          "unknown": 0
+        },
+        "quadratic_cg": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 1,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 99,
+          "unknown": 0
+        },
+        "sine_map": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        }
+      },
+      "per_generator": {
+        "lfsr": {
+          "target": "lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 6.05050505050505
+        },
+        "filtered_lfsr": {
+          "target": "filtered_lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 5.653061224489796
+        },
+        "lcg": {
+          "target": "lcg",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 7.0
+        },
+        "lcg_full": {
+          "target": "lcg_full",
+          "accuracy": 0.51,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 27.254901960784313
+        },
+        "weak_seed": {
+          "target": "weak_seed",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 6.27
+        },
+        "logistic": {
+          "target": "chaos",
+          "accuracy": 0.99,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 7.555555555555555
+        },
+        "tent": {
+          "target": "chaos",
+          "accuracy": 0.96,
+          "hard_false_id": 0.04,
+          "n_hard": 4,
+          "mean_hops": 7.468085106382978
+        },
+        "henon": {
+          "target": "chaos",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 9.15
+        },
+        "markov": {
+          "target": "markov",
+          "accuracy": 0.96,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": 84.18085106382979
+        },
+        "csprng": {
+          "target": "unknown",
+          "accuracy": 0.93,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        },
+        "lagged_fib": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": null
+        },
+        "quadratic_cg": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.01,
+          "n_hard": 1,
+          "mean_hops": null
+        },
+        "sine_map": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        }
+      }
+    },
+    "contested": {
+      "p_d": 0.6,
+      "p_fa": 0.05,
+      "counts": {
+        "lfsr": {
+          "lfsr": 100,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "filtered_lfsr": {
+          "lfsr": 0,
+          "filtered_lfsr": 100,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg": {
+          "lfsr": 2,
+          "filtered_lfsr": 1,
+          "lcg": 96,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 0,
+          "markov": 0,
+          "unknown": 0
+        },
+        "lcg_full": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 1,
+          "lcg_full": 4,
+          "weak_seed": 0,
+          "chaos": 2,
+          "markov": 71,
+          "unknown": 21
+        },
+        "weak_seed": {
+          "lfsr": 1,
+          "filtered_lfsr": 1,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 97,
+          "chaos": 1,
+          "markov": 0,
+          "unknown": 0
+        },
+        "logistic": {
+          "lfsr": 2,
+          "filtered_lfsr": 1,
+          "lcg": 1,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 96,
+          "markov": 0,
+          "unknown": 0
+        },
+        "tent": {
+          "lfsr": 0,
+          "filtered_lfsr": 11,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 88,
+          "markov": 0,
+          "unknown": 0
+        },
+        "henon": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 1,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 97,
+          "markov": 0,
+          "unknown": 0
+        },
+        "markov": {
+          "lfsr": 0,
+          "filtered_lfsr": 2,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 1,
+          "markov": 65,
+          "unknown": 32
+        },
+        "csprng": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 1,
+          "lcg_full": 0,
+          "weak_seed": 1,
+          "chaos": 1,
+          "markov": 23,
+          "unknown": 73
+        },
+        "lagged_fib": {
+          "lfsr": 1,
+          "filtered_lfsr": 0,
+          "lcg": 1,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 1,
+          "markov": 90,
+          "unknown": 7
+        },
+        "quadratic_cg": {
+          "lfsr": 0,
+          "filtered_lfsr": 1,
+          "lcg": 3,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 0,
+          "markov": 78,
+          "unknown": 18
+        },
+        "sine_map": {
+          "lfsr": 0,
+          "filtered_lfsr": 0,
+          "lcg": 0,
+          "lcg_full": 0,
+          "weak_seed": 0,
+          "chaos": 100,
+          "markov": 0,
+          "unknown": 0
+        }
+      },
+      "per_generator": {
+        "lfsr": {
+          "target": "lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 11.444444444444445
+        },
+        "filtered_lfsr": {
+          "target": "filtered_lfsr",
+          "accuracy": 1.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": 10.071428571428571
+        },
+        "lcg": {
+          "target": "lcg",
+          "accuracy": 0.96,
+          "hard_false_id": 0.04,
+          "n_hard": 4,
+          "mean_hops": 12.947916666666666
+        },
+        "lcg_full": {
+          "target": "lcg_full",
+          "accuracy": 0.04,
+          "hard_false_id": 0.02,
+          "n_hard": 2,
+          "mean_hops": 105.5
+        },
+        "weak_seed": {
+          "target": "weak_seed",
+          "accuracy": 0.97,
+          "hard_false_id": 0.02,
+          "n_hard": 2,
+          "mean_hops": 11.525773195876289
+        },
+        "logistic": {
+          "target": "chaos",
+          "accuracy": 0.96,
+          "hard_false_id": 0.04,
+          "n_hard": 4,
+          "mean_hops": 20.145833333333332
+        },
+        "tent": {
+          "target": "chaos",
+          "accuracy": 0.88,
+          "hard_false_id": 0.12,
+          "n_hard": 12,
+          "mean_hops": 23.666666666666668
+        },
+        "henon": {
+          "target": "chaos",
+          "accuracy": 0.97,
+          "hard_false_id": 0.03,
+          "n_hard": 3,
+          "mean_hops": 24.38144329896907
+        },
+        "markov": {
+          "target": "markov",
+          "accuracy": 0.65,
+          "hard_false_id": 0.02,
+          "n_hard": 2,
+          "mean_hops": 128.2
+        },
+        "csprng": {
+          "target": "unknown",
+          "accuracy": 0.73,
+          "hard_false_id": 0.03,
+          "n_hard": 3,
+          "mean_hops": null
+        },
+        "lagged_fib": {
+          "target": "unknown",
+          "accuracy": 0.07,
+          "hard_false_id": 0.02,
+          "n_hard": 2,
+          "mean_hops": null
+        },
+        "quadratic_cg": {
+          "target": "unknown",
+          "accuracy": 0.18,
+          "hard_false_id": 0.04,
+          "n_hard": 4,
+          "mean_hops": null
+        },
+        "sine_map": {
+          "target": "unknown",
+          "accuracy": 0.0,
+          "hard_false_id": 0.0,
+          "n_hard": 0,
+          "mean_hops": null
+        }
+      }
+    }
+  }
+}

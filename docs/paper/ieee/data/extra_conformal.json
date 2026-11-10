@@ -1,0 +1,397 @@
+{
+  "sensors": {
+    "strong": {
+      "meta": {
+        "M": 16,
+        "window": 140,
+        "n_seeds": 30,
+        "p_d": 0.95,
+        "p_fa": 0.01,
+        "alpha": 0.1,
+        "target_coverage": 0.9,
+        "gamma": 0.03,
+        "chance": 0.0625,
+        "pool": [
+          "lfsr",
+          "lcg",
+          "markov",
+          "lagged_fib",
+          "csprng"
+        ],
+        "metric": "conformal next-channel coverage + set size (tones)"
+      },
+      "calibration": {
+        "target": [
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          0.95
+        ],
+        "conformal": [
+          0.8512935323383083,
+          0.8905970149253729,
+          0.9283084577114428,
+          0.9659701492537314,
+          0.9846268656716419
+        ],
+        "top1": 0.6622388059701493,
+        "top3": 0.7340796019900496
+      },
+      "operating_point": {
+        "lfsr": {
+          "coverage": 0.9997512437810945,
+          "mean_set_size": 1.0417910447761194,
+          "kappa": 0.9448125345637646,
+          "jam_hit_rate": 0.9997512437810945,
+          "top3_coverage": 1.0,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.0970149253731343,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "coverage": 0.9997512437810946,
+          "mean_set_size": 1.0430348258706468,
+          "kappa": 0.94411516650625,
+          "jam_hit_rate": 0.9997512437810946,
+          "top3_coverage": 1.0,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.096019900497512,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "coverage": 0.9995024875621891,
+          "mean_set_size": 1.0380597014925372,
+          "kappa": 0.9445505947292857,
+          "jam_hit_rate": 0.9995024875621891,
+          "top3_coverage": 1.0,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.0890547263681594,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "coverage": 0.943781094527363,
+          "mean_set_size": 2.4930348258706467,
+          "kappa": 0.6085248653388982,
+          "jam_hit_rate": 0.943781094527363,
+          "top3_coverage": 0.9552238805970148,
+          "conf_tones_coverage": 0.9992537313432837,
+          "conf_tones_mean": 6.870895522388059,
+          "group": "in_bank"
+        },
+        "markov": {
+          "coverage": 0.9238805970149252,
+          "mean_set_size": 13.269900497512436,
+          "kappa": 0.05228870497673091,
+          "jam_hit_rate": 0.9238805970149252,
+          "top3_coverage": 0.48731343283582085,
+          "conf_tones_coverage": 0.9853233830845771,
+          "conf_tones_mean": 15.258706467661689,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "coverage": 0.9995024875621891,
+          "mean_set_size": 1.2935323383084578,
+          "kappa": 0.9248751975384786,
+          "jam_hit_rate": 0.9995024875621891,
+          "top3_coverage": 0.9955223880597015,
+          "conf_tones_coverage": 0.9997512437810946,
+          "conf_tones_mean": 2.336318407960199,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "coverage": 1.0,
+          "mean_set_size": 1.1385572139303484,
+          "kappa": 0.9348103869066977,
+          "jam_hit_rate": 1.0,
+          "top3_coverage": 0.9992537313432837,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.182835820895522,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "coverage": 0.895273631840796,
+          "mean_set_size": 4.358706467661691,
+          "kappa": 0.5188297114259968,
+          "jam_hit_rate": 0.895273631840796,
+          "top3_coverage": 0.8333333333333333,
+          "conf_tones_coverage": 0.9763681592039803,
+          "conf_tones_mean": 8.222885572139303,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "coverage": 0.9072139303482586,
+          "mean_set_size": 14.360447761194028,
+          "kappa": 0.009479433768921188,
+          "jam_hit_rate": 0.9072139303482586,
+          "top3_coverage": 0.18756218905472638,
+          "conf_tones_coverage": 0.9925373134328359,
+          "conf_tones_mean": 15.883582089552242,
+          "group": "control"
+        }
+      }
+    },
+    "typical": {
+      "meta": {
+        "M": 16,
+        "window": 140,
+        "n_seeds": 30,
+        "p_d": 0.8,
+        "p_fa": 0.02,
+        "alpha": 0.1,
+        "target_coverage": 0.9,
+        "gamma": 0.03,
+        "chance": 0.0625,
+        "pool": [
+          "lfsr",
+          "lcg",
+          "markov",
+          "lagged_fib",
+          "csprng"
+        ],
+        "metric": "conformal next-channel coverage + set size (tones)"
+      },
+      "calibration": {
+        "target": [
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          0.95
+        ],
+        "conformal": [
+          0.8390547263681591,
+          0.880049751243781,
+          0.921144278606965,
+          0.9614427860696515,
+          0.9824378109452738
+        ],
+        "top1": 0.6307960199004975,
+        "top3": 0.6957213930348258
+      },
+      "operating_point": {
+        "lfsr": {
+          "coverage": 0.9997512437810946,
+          "mean_set_size": 1.1584577114427859,
+          "kappa": 0.9120693889179858,
+          "jam_hit_rate": 0.9997512437810946,
+          "top3_coverage": 0.9997512437810945,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.459452736318408,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "coverage": 0.9997512437810946,
+          "mean_set_size": 1.168905472636816,
+          "kappa": 0.9135246095147687,
+          "jam_hit_rate": 0.9997512437810946,
+          "top3_coverage": 1.0,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.4584577114427857,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "coverage": 0.9995024875621891,
+          "mean_set_size": 1.1716417910447765,
+          "kappa": 0.9135925301985105,
+          "jam_hit_rate": 0.9995024875621891,
+          "top3_coverage": 1.0,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 2.462189054726368,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "coverage": 0.9524875621890545,
+          "mean_set_size": 3.2868159203980105,
+          "kappa": 0.5335198716609917,
+          "jam_hit_rate": 0.9524875621890545,
+          "top3_coverage": 0.9124378109452738,
+          "conf_tones_coverage": 0.9977611940298508,
+          "conf_tones_mean": 8.005472636815918,
+          "group": "in_bank"
+        },
+        "markov": {
+          "coverage": 0.916417910447761,
+          "mean_set_size": 13.877860696517411,
+          "kappa": 0.03145998673070556,
+          "jam_hit_rate": 0.916417910447761,
+          "top3_coverage": 0.34776119402985084,
+          "conf_tones_coverage": 0.9843283582089554,
+          "conf_tones_mean": 15.595522388059699,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "coverage": 0.9895522388059703,
+          "mean_set_size": 2.359203980099503,
+          "kappa": 0.8230730819695,
+          "jam_hit_rate": 0.9895522388059703,
+          "top3_coverage": 0.9462686567164179,
+          "conf_tones_coverage": 0.9957711442786069,
+          "conf_tones_mean": 3.764427860696517,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "coverage": 0.994776119402985,
+          "mean_set_size": 1.7032338308457713,
+          "kappa": 0.87083295076614,
+          "jam_hit_rate": 0.994776119402985,
+          "top3_coverage": 0.9815920398009952,
+          "conf_tones_coverage": 0.9987562189054725,
+          "conf_tones_mean": 3.0480099502487565,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "coverage": 0.903233830845771,
+          "mean_set_size": 5.609701492537314,
+          "kappa": 0.42067667953543936,
+          "jam_hit_rate": 0.903233830845771,
+          "top3_coverage": 0.7467661691542289,
+          "conf_tones_coverage": 0.9751243781094527,
+          "conf_tones_mean": 9.698009950248759,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "coverage": 0.9019900497512439,
+          "mean_set_size": 14.458457711442785,
+          "kappa": 0.010150985534641261,
+          "jam_hit_rate": 0.9019900497512439,
+          "top3_coverage": 0.18482587064676617,
+          "conf_tones_coverage": 0.9912935323383084,
+          "conf_tones_mean": 15.88283582089552,
+          "group": "control"
+        }
+      }
+    },
+    "contested": {
+      "meta": {
+        "M": 16,
+        "window": 140,
+        "n_seeds": 30,
+        "p_d": 0.6,
+        "p_fa": 0.05,
+        "alpha": 0.1,
+        "target_coverage": 0.9,
+        "gamma": 0.03,
+        "chance": 0.0625,
+        "pool": [
+          "lfsr",
+          "lcg",
+          "markov",
+          "lagged_fib",
+          "csprng"
+        ],
+        "metric": "conformal next-channel coverage + set size (tones)"
+      },
+      "calibration": {
+        "target": [
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          0.95
+        ],
+        "conformal": [
+          0.7763184079601989,
+          0.833681592039801,
+          0.8901492537313432,
+          0.948955223880597,
+          0.9770149253731343
+        ],
+        "top1": 0.5041293532338309,
+        "top3": 0.5961691542288557
+      },
+      "operating_point": {
+        "lfsr": {
+          "coverage": 0.9995024875621892,
+          "mean_set_size": 1.7898009950248757,
+          "kappa": 0.8325409765153248,
+          "jam_hit_rate": 0.9995024875621892,
+          "top3_coverage": 0.9920398009950249,
+          "conf_tones_coverage": 1.0,
+          "conf_tones_mean": 3.543532338308458,
+          "group": "in_bank"
+        },
+        "weak_seed": {
+          "coverage": 0.9990049751243781,
+          "mean_set_size": 1.8064676616915425,
+          "kappa": 0.8360955963910455,
+          "jam_hit_rate": 0.9990049751243781,
+          "top3_coverage": 0.9935323383084577,
+          "conf_tones_coverage": 0.9997512437810946,
+          "conf_tones_mean": 3.514676616915423,
+          "group": "in_bank"
+        },
+        "lcg": {
+          "coverage": 0.9990049751243782,
+          "mean_set_size": 1.8228855721393036,
+          "kappa": 0.834684218749096,
+          "jam_hit_rate": 0.9990049751243782,
+          "top3_coverage": 0.9922885572139303,
+          "conf_tones_coverage": 0.9997512437810946,
+          "conf_tones_mean": 3.5358208955223884,
+          "group": "in_bank"
+        },
+        "logistic": {
+          "coverage": 0.9517412935323384,
+          "mean_set_size": 6.552487562189054,
+          "kappa": 0.32713085598235175,
+          "jam_hit_rate": 0.9517412935323384,
+          "top3_coverage": 0.7701492537313431,
+          "conf_tones_coverage": 0.9917910447761193,
+          "conf_tones_mean": 11.092537313432835,
+          "group": "in_bank"
+        },
+        "markov": {
+          "coverage": 0.9106965174129353,
+          "mean_set_size": 14.195273631840797,
+          "kappa": 0.03055308200257299,
+          "jam_hit_rate": 0.9106965174129353,
+          "top3_coverage": 0.22587064676616914,
+          "conf_tones_coverage": 0.9776119402985075,
+          "conf_tones_mean": 15.599004975124378,
+          "group": "in_bank"
+        },
+        "lagged_fib": {
+          "coverage": 0.9350746268656717,
+          "mean_set_size": 9.645771144278607,
+          "kappa": 0.3054358134701697,
+          "jam_hit_rate": 0.9350746268656717,
+          "top3_coverage": 0.5902985074626864,
+          "conf_tones_coverage": 0.9716417910447762,
+          "conf_tones_mean": 11.458457711442787,
+          "group": "new_algorithm"
+        },
+        "quadratic_cg": {
+          "coverage": 0.9487562189054727,
+          "mean_set_size": 6.413681592039802,
+          "kappa": 0.5321509107378002,
+          "jam_hit_rate": 0.9487562189054727,
+          "top3_coverage": 0.7450248756218906,
+          "conf_tones_coverage": 0.9778606965174129,
+          "conf_tones_mean": 8.054975124378108,
+          "group": "new_algorithm"
+        },
+        "sine_map": {
+          "coverage": 0.9114427860696518,
+          "mean_set_size": 9.56442786069652,
+          "kappa": 0.2127067947962928,
+          "jam_hit_rate": 0.9114427860696518,
+          "top3_coverage": 0.5713930348258707,
+          "conf_tones_coverage": 0.9718905472636815,
+          "conf_tones_mean": 12.827611940298505,
+          "group": "new_algorithm"
+        },
+        "csprng": {
+          "coverage": 0.9004975124378108,
+          "mean_set_size": 14.428358208955224,
+          "kappa": 0.019120027068133552,
+          "jam_hit_rate": 0.9004975124378108,
+          "top3_coverage": 0.1803482587064677,
+          "conf_tones_coverage": 0.9855721393034824,
+          "conf_tones_mean": 15.76542288557214,
+          "group": "control"
+        }
+      }
+    }
+  }
+}
