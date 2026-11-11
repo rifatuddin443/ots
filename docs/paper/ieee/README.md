@@ -44,3 +44,21 @@ alone aggregates 5,200 episodes; the coverage and mismatch runs add
 | `fig_confusion.png`    | `data/extra_confusion.json` |
 | `fig_results.png`      | `results/exp13,exp14,exp20` + `data/extra_predict.json` |
 | `fig_mismatch.png`     | `data/extra_mismatch.json` |
+| `fig_denial.png`       | `data/exp24_denial.json` (`python -m scripts.paper_additions`) |
+
+## Baselines, response and compute-time results
+
+Tables III and V, Fig. 5 and the compute-time paragraph come from four
+standalone experiments (not in `scripts.run_all`; exp23 trains an LSTM per
+sensor and needs `torch`, about 30 minutes on 4 cores):
+
+```bash
+python -m experiments.exp22_id_baselines
+python -m experiments.exp23_prediction_baselines
+python -m experiments.exp24_denial
+python -m experiments.exp25_runtime
+python -m scripts.paper_additions    # copies JSON to data/, renders fig_denial.png
+```
+
+`fig_methodology.png` is no longer included by the paper (Algorithm 1 carries
+the per-slot loop); the file is kept so it can be restored.

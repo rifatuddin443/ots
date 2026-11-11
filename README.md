@@ -168,6 +168,10 @@ the exp6/exp7 protocols with the same seeds.
 | `exp19_sequence_coverage` | thesis §4.2 | Every structured sequence type (arithmetic, polynomial, linear/nonlinear recurrence, lookup table, hybrids, noisy rule) and secrets far outside the recce ranges: top-1 and **hops to lock**, before vs after the structured experts |
 | `exp20_conformal_sets` | thesis §4.2 / §7 (new) | **Conformal next-channel prediction sets**: distribution-free coverage `1-α` with a data-driven set size, vs fixed top-k; the set funded as the multi-tone jam plan (coverage ⇒ jam-hit guarantee) |
 | `exp21_identification_converse` | §10 (new) | A **lower bound** (converse) on hops-to-identify: measured `E[τ]` sits at or above the sequential-test floor `log((1-δ)/δ)/D`, within ≈2.3× |
+| `exp22_id_baselines` | paper §V-A | Identification bank vs pairwise SPRT, fixed-length LRT and a learned classifier on identical episodes (in-bank accuracy, CSPRNG→unknown, hard false-ID, hops) |
+| `exp23_prediction_baselines` | paper §V-D | External next-channel predictors on exp14's episodes: online Markov-1, PPM-C, and an LSTM trained on the in-bank families (needs `torch`) |
+| `exp24_denial` | paper §V-E | Multi-tone response: fraction of hops denied vs tone budget per generator, with the conformal set as the tone plan |
+| `exp25_runtime` | paper §V-F | Per-slot compute time of the bank, predictor, conformal set and switch tracker (per-expert breakdown, `M` = 16 and 64) |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 

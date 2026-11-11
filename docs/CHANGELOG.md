@@ -401,3 +401,36 @@ Two behaviours the bank alone could not provide:
 ### Notes for future changes
 - Reconciled against the `next-channel prediction` + dashboard work already on the branch: these experiments are numbered **exp15/16/17** (exp14 is `next_channel_prediction`). Keep new experiments numbered sequentially and add a row to the README experiments table.
 - Detector defaults (`exp15_regime_switch._DETECTOR`) were tuned for a low false-alarm rate; when the monitor does not fire, the flush config simply equals weights-only, so the context flush never hurts.
+
+## Conference-paper additions: baselines, response result, compute time
+
+Four standalone experiments back results added to the IEEE paper
+(`docs/paper/ieee/`). They are not wired into `scripts/run_all` (exp23 trains an
+LSTM per sensor and needs `torch`); run each with `python -m experiments.<name>`,
+then `python -m scripts.paper_additions`.
+
+- `exp22_id_baselines` — bank + `H_0` vs pairwise SPRT / fixed-length LRT / learned
+  classifier, 2,000 episodes. Typical sensor: in-bank accuracy 0.99 / 0.98 / 0.94 /
+  0.61; hard false-ID on out-of-bank emitters 0.005 / 0.235 / 0.230 / 0.482.
+- `exp23_prediction_baselines` — Markov-1, PPM-C and a trained LSTM on exp14's
+  episodes (450). Its `proposed` / `id_only` columns reproduce `extra_predict.json`.
+  The LSTM reaches 1.00 on the in-family LFSR and 0.01–0.13 on the held-out
+  lagged-Fibonacci and quadratic generators; PPM-C gets 0.74 / 0.42 / 0.21 on
+  lagged-Fibonacci at the strong / typical / contested sensor.
+- `exp24_denial` — fraction of hops denied vs tone budget on exp20's protocol, 540
+  episodes. Unlimited budget: 0.90–1.00 denied for every generator; mean tones on
+  the typical sensor 1.2 (LFSR) to 14.5 (CSPRNG).
+- `exp25_runtime` — median per-slot time on one 2.1 GHz Xeon core, `M=16`: bank
+  0.79 ms, predictor 1.86 ms (95th percentile 17 ms), conformal set 0.06 ms, switch
+  tracker 46 ms.
+
+### Paper text changes
+- Abstract: the identification claim is qualified by sensor and excludes the
+  full-state LCG; the episode total (15,690) is accounted for in Section IV.
+- Table IV (prediction): the Strong column held the `P_fa = 0` numbers of the default
+  exp14 run; it now holds the strong-sensor `(0.95, 0.01)` numbers from
+  `data/extra_predict.json` (identification-only bank on lagged-Fibonacci 0.38, not
+  0.35; quadratic 0.90, not 1.00).
+- Fig. 2 (per-slot flowchart, a duplicate of Algorithm 1) was dropped and float
+  spacing tightened to make room; the body fits six pages, the last references
+  run onto a seventh.

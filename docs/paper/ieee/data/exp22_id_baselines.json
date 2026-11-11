@@ -1,0 +1,737 @@
+{
+  "meta": {
+    "M": 16,
+    "window": 140,
+    "n_seeds": 100,
+    "generators": [
+      "lfsr",
+      "filtered_lfsr",
+      "lcg",
+      "weak_seed",
+      "logistic",
+      "markov",
+      "csprng",
+      "lagged_fib",
+      "quadratic_cg",
+      "sine_map"
+    ],
+    "experts": [
+      "lfsr",
+      "filtered_lfsr",
+      "lcg",
+      "lcg_full",
+      "weak_seed",
+      "chaos",
+      "markov"
+    ],
+    "n_episodes": 2000,
+    "classifier": {
+      "classes": [
+        "chaos",
+        "filtered_lfsr",
+        "lcg",
+        "lfsr",
+        "markov",
+        "weak_seed",
+        "unknown"
+      ],
+      "n_train": 2100,
+      "heldout_accuracy": 0.530952380952381
+    },
+    "fixed_length_n": 30
+  },
+  "sensors": {
+    "typical": {
+      "p_d": 0.8,
+      "p_fa": 0.02,
+      "methods": {
+        "bank": {
+          "in_bank_accuracy": {
+            "mean": 0.995,
+            "ci": [
+              0.9883333333333333,
+              1.0
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.89,
+            "ci": [
+              0.83,
+              0.95
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.004,
+            "ci": [
+              0.001,
+              0.008
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.005,
+            "ci": [
+              0.0,
+              0.0125
+            ],
+            "n": 400
+          },
+          "mean_hops": 18.79491525423729,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "filtered_lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "lcg": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "weak_seed": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "logistic": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "markov": {
+              "accuracy": 0.98,
+              "hard_false_id": 0.01
+            },
+            "csprng": {
+              "accuracy": 0.89,
+              "hard_false_id": 0.01
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.0
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.0
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.01
+            }
+          }
+        },
+        "pairwise_sprt": {
+          "in_bank_accuracy": {
+            "mean": 0.98,
+            "ci": [
+              0.9683333333333334,
+              0.99
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.103,
+            "ci": [
+              0.085,
+              0.122
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.235,
+            "ci": [
+              0.1925,
+              0.2775
+            ],
+            "n": 400
+          },
+          "mean_hops": 16.881849315068493,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "filtered_lfsr": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "lcg": {
+              "accuracy": 0.98,
+              "hard_false_id": 0.02
+            },
+            "weak_seed": {
+              "accuracy": 0.98,
+              "hard_false_id": 0.01
+            },
+            "logistic": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "markov": {
+              "accuracy": 0.93,
+              "hard_false_id": 0.05
+            },
+            "csprng": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.88
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.01
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.04
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.01
+            }
+          }
+        },
+        "fixed_length": {
+          "in_bank_accuracy": {
+            "mean": 0.94,
+            "ci": [
+              0.92,
+              0.9583333333333334
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.128,
+            "ci": [
+              0.107,
+              0.15
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.23,
+            "ci": [
+              0.19,
+              0.2725
+            ],
+            "n": 400
+          },
+          "mean_hops": 30.0,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "filtered_lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "lcg": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "weak_seed": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "logistic": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "markov": {
+              "accuracy": 0.64,
+              "hard_false_id": 0.36
+            },
+            "csprng": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.59
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.24
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.09
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.0
+            }
+          }
+        },
+        "learned": {
+          "in_bank_accuracy": {
+            "mean": 0.6133333333333333,
+            "ci": [
+              0.5733333333333334,
+              0.6516666666666666
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.24,
+            "ci": [
+              0.16,
+              0.32
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.318,
+            "ci": [
+              0.29,
+              0.349
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.4825,
+            "ci": [
+              0.435,
+              0.5325
+            ],
+            "n": 400
+          },
+          "mean_hops": 140.0,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 0.8,
+              "hard_false_id": 0.12
+            },
+            "filtered_lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "lcg": {
+              "accuracy": 0.23,
+              "hard_false_id": 0.47
+            },
+            "weak_seed": {
+              "accuracy": 0.25,
+              "hard_false_id": 0.34
+            },
+            "logistic": {
+              "accuracy": 0.96,
+              "hard_false_id": 0.0
+            },
+            "markov": {
+              "accuracy": 0.44,
+              "hard_false_id": 0.32
+            },
+            "csprng": {
+              "accuracy": 0.24,
+              "hard_false_id": 0.7
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.23
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 1.0
+            },
+            "sine_map": {
+              "accuracy": 0.03,
+              "hard_false_id": 0.0
+            }
+          }
+        }
+      },
+      "in_bank_accuracy_bank_minus": {
+        "pairwise_sprt": {
+          "mean_diff": 0.015,
+          "ci": [
+            0.006666666666666667,
+            0.025
+          ],
+          "p_value": 0.0004,
+          "metric": "correct",
+          "n": 600
+        },
+        "fixed_length": {
+          "mean_diff": 0.055,
+          "ci": [
+            0.03666666666666667,
+            0.075
+          ],
+          "p_value": 0.0,
+          "metric": "correct",
+          "n": 600
+        },
+        "learned": {
+          "mean_diff": 0.38166666666666665,
+          "ci": [
+            0.3416666666666667,
+            0.4216666666666667
+          ],
+          "p_value": 0.0,
+          "metric": "correct",
+          "n": 600
+        }
+      }
+    },
+    "contested": {
+      "p_d": 0.6,
+      "p_fa": 0.05,
+      "methods": {
+        "bank": {
+          "in_bank_accuracy": {
+            "mean": 0.9266666666666666,
+            "ci": [
+              0.905,
+              0.9466666666666667
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.82,
+            "ci": [
+              0.74,
+              0.89
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.009,
+            "ci": [
+              0.004,
+              0.015
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.0175,
+            "ci": [
+              0.005,
+              0.03
+            ],
+            "n": 400
+          },
+          "mean_hops": 14.48015873015873,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "filtered_lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "lcg": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "weak_seed": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "logistic": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "markov": {
+              "accuracy": 0.58,
+              "hard_false_id": 0.0
+            },
+            "csprng": {
+              "accuracy": 0.82,
+              "hard_false_id": 0.04
+            },
+            "lagged_fib": {
+              "accuracy": 0.05,
+              "hard_false_id": 0.0
+            },
+            "quadratic_cg": {
+              "accuracy": 0.26,
+              "hard_false_id": 0.03
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.0
+            }
+          }
+        },
+        "pairwise_sprt": {
+          "in_bank_accuracy": {
+            "mean": 0.9133333333333333,
+            "ci": [
+              0.89,
+              0.935
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.154,
+            "ci": [
+              0.133,
+              0.17602499999999985
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.2675,
+            "ci": [
+              0.2225,
+              0.3125
+            ],
+            "n": 400
+          },
+          "mean_hops": 12.428571428571429,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 0.95,
+              "hard_false_id": 0.04
+            },
+            "filtered_lfsr": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "lcg": {
+              "accuracy": 0.96,
+              "hard_false_id": 0.03
+            },
+            "weak_seed": {
+              "accuracy": 0.96,
+              "hard_false_id": 0.03
+            },
+            "logistic": {
+              "accuracy": 0.98,
+              "hard_false_id": 0.02
+            },
+            "markov": {
+              "accuracy": 0.64,
+              "hard_false_id": 0.34
+            },
+            "csprng": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.77
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.07
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.22
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.01
+            }
+          }
+        },
+        "fixed_length": {
+          "in_bank_accuracy": {
+            "mean": 0.9033333333333333,
+            "ci": [
+              0.8783333333333333,
+              0.9266666666666666
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.222,
+            "ci": [
+              0.196,
+              0.247
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.4175,
+            "ci": [
+              0.37,
+              0.4675
+            ],
+            "n": 400
+          },
+          "mean_hops": 30.0,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 0.99,
+              "hard_false_id": 0.01
+            },
+            "filtered_lfsr": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "lcg": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "weak_seed": {
+              "accuracy": 1.0,
+              "hard_false_id": 0.0
+            },
+            "logistic": {
+              "accuracy": 0.98,
+              "hard_false_id": 0.01
+            },
+            "markov": {
+              "accuracy": 0.45,
+              "hard_false_id": 0.53
+            },
+            "csprng": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.6
+            },
+            "lagged_fib": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.43
+            },
+            "quadratic_cg": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.58
+            },
+            "sine_map": {
+              "accuracy": 0.0,
+              "hard_false_id": 0.06
+            }
+          }
+        },
+        "learned": {
+          "in_bank_accuracy": {
+            "mean": 0.4666666666666667,
+            "ci": [
+              0.42833333333333334,
+              0.5083333333333333
+            ],
+            "n": 600
+          },
+          "csprng_unknown": {
+            "mean": 0.26,
+            "ci": [
+              0.17,
+              0.34
+            ],
+            "n": 100
+          },
+          "hard_false_id": {
+            "mean": 0.303,
+            "ci": [
+              0.274,
+              0.332
+            ],
+            "n": 1000
+          },
+          "hard_false_id_out_of_bank": {
+            "mean": 0.4125,
+            "ci": [
+              0.365,
+              0.46
+            ],
+            "n": 400
+          },
+          "mean_hops": 140.0,
+          "per_generator": {
+            "lfsr": {
+              "accuracy": 0.55,
+              "hard_false_id": 0.12
+            },
+            "filtered_lfsr": {
+              "accuracy": 0.89,
+              "hard_false_id": 0.02
+            },
+            "lcg": {
+              "accuracy": 0.16,
+              "hard_false_id": 0.39
+            },
+            "weak_seed": {
+              "accuracy": 0.15,
+              "hard_false_id": 0.33
+            },
+            "logistic": {
+              "accuracy": 0.79,
+              "hard_false_id": 0.07
+            },
+            "markov": {
+              "accuracy": 0.26,
+              "hard_false_id": 0.45
+            },
+            "csprng": {
+              "accuracy": 0.26,
+              "hard_false_id": 0.55
+            },
+            "lagged_fib": {
+              "accuracy": 0.04,
+              "hard_false_id": 0.27
+            },
+            "quadratic_cg": {
+              "accuracy": 0.17,
+              "hard_false_id": 0.75
+            },
+            "sine_map": {
+              "accuracy": 0.19,
+              "hard_false_id": 0.08
+            }
+          }
+        }
+      },
+      "in_bank_accuracy_bank_minus": {
+        "pairwise_sprt": {
+          "mean_diff": 0.013333333333333334,
+          "ci": [
+            -0.0033333333333333335,
+            0.03
+          ],
+          "p_value": 0.134,
+          "metric": "correct",
+          "n": 600
+        },
+        "fixed_length": {
+          "mean_diff": 0.023333333333333334,
+          "ci": [
+            0.0016666666666666668,
+            0.045
+          ],
+          "p_value": 0.0464,
+          "metric": "correct",
+          "n": 600
+        },
+        "learned": {
+          "mean_diff": 0.46,
+          "ci": [
+            0.4166666666666667,
+            0.5016666666666667
+          ],
+          "p_value": 0.0,
+          "metric": "correct",
+          "n": 600
+        }
+      }
+    }
+  }
+}

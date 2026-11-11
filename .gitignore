@@ -20,3 +20,8 @@ data/*.json
 venv/
 .DS_Store
 ots_website.zip
+
+# LaTeX build files
+docs/paper/**/*.aux
+docs/paper/**/*.log
+docs/paper/**/*.out
