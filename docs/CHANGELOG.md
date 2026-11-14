@@ -11,6 +11,70 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-14 — Closed-loop adversary: jammer evasion + counter-ID deception (exp26, exp27)
+
+The whole repo up to here scores the OTS against a **fixed tape** — a hop sequence
+drawn once and sensed, indifferent to the jammer. That is right for the
+identification and prediction claims, but it leaves the system untested against the
+thing a fielded emitter actually does: *fight back*. This revision adds the missing
+half of the engagement — a reactive adversary — and the closed loop that pits it
+against the OTS. Everything is additive; no existing module changed, and both sides
+still move from history alone (no clairvoyance), so the games are fair, not replays.
+
+### `fhew/evasion.py` — reactive anti-jam transmitter (jammer evasion)
+A radio has a receiver, so it knows when it is being denied and (optionally) where
+the jamming sits, and it adapts. `AdaptiveEvasionGenerator` wraps **any** base
+generator and, from jamming feedback only (`JammingFeedback`: `denied` /
+`effect_on_self`, and in `"spectrum"` mode a sensed `jammed_mask`), escalates on one
+scalar **pressure** `P`:
+- **deflection** off a decaying hot-channel map; **entropy escalation** (a sampling
+  temperature that grows with `P`) that drives the OTS predictability `kappa` down;
+  and a **re-key** (fresh seed via `rekey_factory`) that invalidates any lock the OTS
+  holds on the old deterministic sequence.
+- With no jamming it reproduces the base generator exactly (`NO_EVASION_CFG` is a
+  passthrough), so switching evasion on never perturbs the baseline experiments.
+
+### `fhew/deception.py` — counter-reconnaissance deception (counter-ID + counter-jam)
+Deception is mounted at the one interface the OTS consumes — the `Observation`
+stream. `DeceptionEmitter` overlays **time-coherent decoy detections** that follow a
+chosen in-bank family (an LFSR), so to a single-emitter collector they look like a
+second ordinary emitter rather than noise, plus optional unstructured `chaff`.
+`make_deception_episode` wraps any episode; the hidden truth is untouched (scoring
+only), decoys are tagged `DECOY_ID`.
+
+### `fhew/duel.py` — the closed-loop engagement
+`OTSJammer` (predictor + knapsack/conformal/reactive allocation) vs the adversary,
+slot by slot: committed jam lands → sensor + deception → OTS re-predicts and
+re-plans → emitter reacts to *this* slot's jamming and picks the next channel. Both
+decide from history ≤ t; neither sees the other's current move. `run_duel` returns a
+per-slot record and the headline aggregates (fraction denied, next-hop top-1, mean
+`kappa`, tones, re-keys).
+
+### Findings
+- **exp26 (evasion).** Against the strong sensor, closed-loop evasion collapses the
+  fraction of hops denied from **~1.00 → ~0.17** on an LFSR (`kappa` 0.95 → 0.02,
+  several forced re-keys) and **~0.99 → ~0.14** on the held-out lagged-Fibonacci
+  source; the CSPRNG control is unmoved (0.13 → 0.13 — already at the barrage floor,
+  nothing to evade). *Predictable is not un-evadable.*
+- **exp27 (deception).** *Counter-ID:* against a keyed CSPRNG (truth = unknown) with
+  an LFSR decoy, a pairwise SPRT with **no `H_0`** is false-identified **100 %** at
+  every decoy persistence, while the bank's mandatory `H_0` routes an intermittent
+  decoy to *unknown* (hard-false-ID ≈ 0.03 at `p_present ≤ 0.35`). The honest limit:
+  a near-always-on coherent decoy (`p ≥ 0.7`) embeds a real LFSR and defeats even
+  `H_0` — the motivation for emitter-ID sorting (journal). *Counter-jam:* a handful
+  of coherent decoys split the predictive jammer's belief and drive denial on the
+  real hop from **~1.0 to ~0.1** (it preferentially chases the decoy, which under a
+  lossy sensor is a *cleaner* signal than the real emitter), with tones wasted on
+  ghosts.
+
+Modules: `fhew/evasion.py`, `fhew/deception.py`, `fhew/duel.py`;
+`experiments/exp26_evasion.py`, `experiments/exp27_deception.py`;
+`tests/test_evasion.py` (13), `tests/test_deception.py` (9), `tests/test_duel.py` (7).
+Lazy re-exports added to `fhew/__init__.py`. Figures in `docs/figures/exp26_*.png`,
+`docs/figures/exp27_*.png`.
+
+---
+
 ## 2026-11-10 — Conformal next-channel prediction sets + an identification converse (exp20, exp21)
 
 Two new, additive contributions on top of the existing predictor and bank. Both

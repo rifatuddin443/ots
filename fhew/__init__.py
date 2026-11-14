@@ -43,6 +43,14 @@ __all__ = [
     "RegimeController",
     "EffectModel",
     "AllocationController",
+    # Revision 4: closed-loop adversary -- jammer evasion and counter-ID deception.
+    "AdaptiveEvasionGenerator",
+    "JammingFeedback",
+    "EvasionConfig",
+    "DeceptionEmitter",
+    "DeceptionConfig",
+    "OTSJammer",
+    "run_duel",
     "__version__",
 ]
 
@@ -59,6 +67,15 @@ def __getattr__(name):
                 "greedy_knapsack", "tones_from_confidence", "predictability"):
         import fhew.allocator as a
         return getattr(a, name)
+    if name in ("AdaptiveEvasionGenerator", "JammingFeedback", "EvasionConfig"):
+        import fhew.evasion as e
+        return getattr(e, name)
+    if name in ("DeceptionEmitter", "DeceptionConfig", "make_deception_episode"):
+        import fhew.deception as d
+        return getattr(d, name)
+    if name in ("OTSJammer", "run_duel", "DuelResult"):
+        import fhew.duel as du
+        return getattr(du, name)
     raise AttributeError(f"module 'fhew' has no attribute {name!r}")
 
 __version__ = "0.1.0"

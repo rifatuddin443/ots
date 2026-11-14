@@ -982,7 +982,100 @@ measured shortfalls over unfounded guarantees.
 
 ---
 
+## 7. Closed-loop adversary: jammer evasion and counter-reconnaissance deception
+
+Sections 4–6 score the system against a **fixed tape**: a hop sequence drawn once
+and sensed, indifferent to the jammer. That isolates identification and prediction,
+but it never tests the system against a *reactive* emitter — one that evades the
+jamming it receives and feeds the collector deceptive detections. This section adds
+that adversary (`fhew/evasion.py`, `fhew/deception.py`) and the closed loop that
+pits it against the OTS predict-then-jam pipeline (`fhew/duel.py`). The design rule
+is **no clairvoyance on either side**: each slot is resolved from history alone — the
+jammer predicts where the emitter will go; the emitter reacts to where it has already
+been jammed — so the result is a fair game, not a replay.
+
+### 7.1 Threat model and information parity (for the adversary too)
+
+The reactive transmitter is given only the physical-layer feedback a radio genuinely
+has: whether *its own* hop was denied (a missing ACK / failed CRC) and, with a
+receiver (`"spectrum"` mode), which channels carried jamming energy this slot. It is
+never given the OTS's prediction, posterior, or the power about to be placed next
+slot. Deception is mounted at the one interface the OTS consumes — the `Observation`
+stream — by overlaying detections that are *time-coherent with an in-bank generator*,
+so to a single-emitter collector they look like a second ordinary emitter, not noise.
+The hidden truth is used only to score, exactly as on the inference side.
+
+### 7.2 Evasion (exp26)
+
+![exp26_evasion.png](figures/exp26_evasion.png)
+
+The evader escalates on one scalar, *pressure* `P` (an EWMA of how often its own hops
+are denied): deflect off a decaying hot-channel map; **spread** its hops with a
+sampling temperature that grows with `P` (this is the direct attack on the predictor
+— it drives `κ` toward the barrage floor); and **re-key** (a fresh seed) once `P`
+crosses a threshold, which voids any lock the OTS holds on the old deterministic
+sequence. Against the strong sensor with a knapsack jammer that denies a fixed tape
+almost completely:
+
+| Base family | Denied, oblivious | Denied, evading | `κ` oblivious → evading |
+| --- | --- | --- | --- |
+| LFSR (in-bank) | ≈ 1.00 | ≈ 0.17 | 0.95 → 0.02 |
+| lagged-Fib. (held out) | ≈ 0.99 | ≈ 0.14 | 0.93 → 0.01 |
+| Markov | ≈ 0.41 | ≈ 0.12 | 0.06 → 0.01 |
+| CSPRNG (control) | ≈ 0.13 | ≈ 0.13 | 0.01 → 0.01 |
+
+The dividend is largest exactly where the open-loop OTS is strongest — the
+*predictable* sources — and vanishes on the CSPRNG, which is already at the barrage
+floor and has nothing to evade. The game curve (panel B) shows denial and `κ` sliding
+down together as aggressiveness rises: the radio trades stealth for escape. The
+mechanism that collapses denial is the same one that collapses `κ` — once the
+sequence is unpredictable it is also un-spot-jammable — which is why the evasion
+result is the action-side mirror of the predictability boundary in Section 6.
+
+### 7.3 Deception (exp27)
+
+![exp27_deception.png](figures/exp27_deception.png)
+
+**Counter-identification (panel A).** The real emitter is a keyed CSPRNG (truth =
+`unknown`); the adversary overlays an LFSR decoy whose *persistence* `p_present` is
+swept. A pairwise SPRT **without** `H_0` is false-identified **100 %** of the time at
+every persistence — lacking a none-of-the-above class, it must name the decoy. The
+bank **with** `H_0` instead routes an intermittent decoy to `unknown` (hard-false-ID
+≈ 0.03, `unknown` ≈ 0.9 at `p_present ≤ 0.35`): the graceful escape that `exp4`
+established against a *passive* out-of-bank source now holds against an *active*
+deceiver, provided the deception is not persistent. The honest limit is shown, not
+hidden: a near-always-on, perfectly coherent decoy (`p_present ≥ 0.7`) embeds a
+genuine LFSR that a single-emitter bank cannot distinguish from a real one, and it
+defeats even `H_0`. That residual is the price of a single-emitter model and the
+motivation for the journal's emitter-ID / multi-emitter sorting.
+
+**Counter-jam (panel B).** In the closed loop against a predictable emitter the OTS
+would otherwise deny completely, a handful of coherent decoys split the predictive
+jammer's belief and drive denial on the *real* hop from ≈ 1.0 to ≈ 0.1 while the tone
+count climbs. The effect is stronger than a naive "split across N emitters" would
+predict because, under a lossy sensor, a persistent decoy is a *cleaner* signal than
+the real emitter (which the sensor misses `1 − P_d` of the time), so the predictor
+preferentially locks onto the decoy and the jammer chases a ghost.
+
+### 7.4 What this adds, and its limits
+
+The closed loop turns a one-sided benchmark into a two-sided engagement and yields
+three results that the fixed-tape experiments cannot: (i) the OTS's prediction
+advantage over structured sources is *contestable* — a reactive radio recovers most
+of the denied spectrum; (ii) `H_0` is not merely a passive safety net but an active
+defence against counter-ID deception, up to a persistence threshold it cannot cross
+alone; and (iii) the single-emitter assumption, invisible on a fixed tape, is the
+pipeline's load-bearing weakness under decoys. **Limitations.** The adversary's
+feedback and the jam effect model are detection-level, matching the rest of the
+codebase; the OTS defences evaluated here are those already built (knapsack /
+conformal / reactive allocation and `H_0`), not the emitter-ID sorting that would
+blunt coherent decoys; and, as everywhere, results are simulation-only.
+
+---
+
 *Reproduce every figure and number: `python -m fhew.datagen && python -m
 scripts.run_all` (figures in `results/figures/`, numbers in `results/*.json`,
 headline summary in `results/summary.json`). Re-render a single figure without
-re-simulating: `python -m experiments.expN_name --plot-only`.*
+re-simulating: `python -m experiments.expN_name --plot-only`. The closed-loop
+adversary (Section 7) is standalone: `python -m experiments.exp26_evasion` and
+`python -m experiments.exp27_deception`.*

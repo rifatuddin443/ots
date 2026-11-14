@@ -172,6 +172,8 @@ the exp6/exp7 protocols with the same seeds.
 | `exp23_prediction_baselines` | paper §V-D | External next-channel predictors on exp14's episodes: online Markov-1, PPM-C, and an LSTM trained on the in-bank families (needs `torch`) |
 | `exp24_denial` | paper §V-E | Multi-tone response: fraction of hops denied vs tone budget per generator, with the conformal set as the tone plan |
 | `exp25_runtime` | paper §V-F | Per-slot compute time of the bank, predictor, conformal set and switch tracker (per-expert breakdown, `M` = 16 and 64) |
+| `exp26_evasion` | thesis §13 (new) | **Closed-loop jammer evasion**: fraction of hops denied, emitter oblivious vs reactive, per family and sensor; the evasion dividend and the game curve (denial & `kappa` vs aggressiveness) |
+| `exp27_deception` | thesis §13 (new) | **Counter-reconnaissance deception**: induced false-ID vs decoy persistence (`H_0` vs no-`H_0`), and tones/denial vs number of coherent decoys in the closed loop |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -377,6 +379,69 @@ the same plans without the recurrence learner and the LCG-anchoring fix:
 
 ---
 
+## The closed-loop adversary: jammer evasion and deception (red team)
+
+Everything above scores the OTS against a **fixed tape** — a hop sequence drawn
+once and sensed, indifferent to the jammer. That is the right setting for the
+identification and prediction claims, but it never tests the system against what a
+fielded emitter actually does: *fight back*. These modules add the missing half of
+the engagement — a reactive adversary — and the closed loop that pits it against the
+OTS. They are additive (no existing module changed), and **both sides move from
+history alone** — neither sees the other's current move — so the games are fair, not
+replays.
+
+| Component | Module | What it adds |
+| --- | --- | --- |
+| Jammer **evasion** | `fhew/evasion.py` | `AdaptiveEvasionGenerator` wraps any base generator and, from jamming feedback only, escalates on one **pressure** scalar: **deflect** off a decaying hot-channel map, **spread** hops (a temperature that grows with pressure, driving the OTS `kappa` down), and **re-key** under sustained denial (a fresh seed that voids any lock). With no jamming it reproduces the base generator exactly. |
+| Counter-ID **deception** | `fhew/deception.py` | `DeceptionEmitter` overlays **time-coherent decoy detections** (following an in-bank family) onto the observation stream, so a single-emitter collector is pushed toward naming the decoy and toward jamming channels no one uses. `make_deception_episode` wraps any episode; decoys are tagged, truth is untouched (scoring only). |
+| The **duel** | `fhew/duel.py` | `OTSJammer` (predict + knapsack / conformal / reactive allocation) vs the adversary, slot by slot. `run_duel` returns a per-slot record and the headline aggregates (fraction denied, next-hop top-1, `kappa`, tones, re-keys). |
+
+```python
+from fhew import ChannelSet, SensorModel
+from fhew.allocator import EffectModel
+from fhew.evasion import AdaptiveEvasionGenerator, EvasionConfig
+from fhew.deception import DeceptionEmitter, DeceptionConfig
+from fhew.duel import OTSJammer, run_duel
+from fhew.generators import make_generator
+import numpy as np
+
+ch, sensor = ChannelSet.of_size(16), SensorModel(0.95, 0.01)
+rng = np.random.default_rng(0)
+
+emitter = AdaptiveEvasionGenerator.from_family("lfsr", ch, rng, base_params={"length": 7})
+jammer  = OTSJammer(ch, sensor, EffectModel(ch, tau=1.0), budget=3.0, max_tones=3)
+decoy   = make_generator("lfsr", 16, rng=rng, length=6)
+deception = DeceptionEmitter(decoy, ch, DeceptionConfig(n_decoys=2),
+                             decoy_family="lfsr", decoy_params={"length": 6}, rng=rng)
+
+result = run_duel(emitter, jammer, sensor, ch, rng, window=160, deception=deception)
+print(result.aggregate())   # {'denied_frac': ..., 'nexthop_top1': ..., 'rekeys': ..., ...}
+```
+
+### Findings (`exp26` / `exp27`, `M=16`, strong sensor)
+
+- **Evasion (`exp26`).** Closed-loop evasion collapses the fraction of hops denied
+  from **~1.00 → ~0.17** on an LFSR (`kappa` 0.95 → 0.02, several forced re-keys)
+  and **~0.99 → ~0.14** on the held-out lagged-Fibonacci source; the keyed CSPRNG
+  control is unmoved (0.13 → 0.13 — already at the barrage floor, nothing to evade).
+  *Predictable is not un-evadable.*
+- **Deception, counter-ID (`exp27`).** Against a keyed CSPRNG (truth = unknown) with
+  an LFSR decoy, a pairwise SPRT with **no `H_0`** is false-identified **100 %** at
+  *every* decoy persistence, while the mandatory `H_0` routes an intermittent decoy
+  to **unknown** (hard-false-ID ≈ 0.03 at `p_present ≤ 0.35`). The honest limit, shown
+  not hidden: a near-always-on coherent decoy embeds a genuine LFSR and defeats even
+  `H_0` — which is why emitter-ID sorting is the journal's next step. This is the
+  active-adversary analogue of the passive `exp4` none-of-the-above result.
+- **Deception, counter-jam (`exp27`).** A handful of coherent decoys split the
+  predictive jammer's belief and drive denial on the real hop from **~1.0 to ~0.1**:
+  under a lossy sensor a persistent decoy is a *cleaner* signal than the real
+  emitter, so the jammer preferentially chases ghosts and wastes tones on them.
+
+```bash
+python -m experiments.exp26_evasion --n-seeds 20      # evasion dividend + game curve
+python -m experiments.exp27_deception --n-seeds 20    # counter-ID boundary + counter-jam
+```
+
 ## Package layout
 
 Each concern is a single flat module in `fhew/` (the former subpackages were
@@ -410,6 +475,11 @@ fhew/
   scenarios.py       regime-switch / long-dwell episode builders
   tracker.py         SwitchTracker: follow a transmitter that switches algorithm at
                      will (change-point posterior over anchored bank segments)
+  evasion.py         AdaptiveEvasionGenerator: reactive anti-jam transmitter
+                     (deflect / spread / re-key from jamming feedback) — thesis §13
+  deception.py       DeceptionEmitter: time-coherent decoy injection on the
+                     observation stream (counter-ID + counter-jam) — thesis §13
+  duel.py            run_duel + OTSJammer: the closed-loop OTS-vs-adversary engagement
 configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp21 + shared style/harness
 scripts/run_all.py   run everything
@@ -420,6 +490,9 @@ tests/test_mixture_allocation.py  37 tests for the mixture / regime / allocator
 tests/test_tracker.py             16 tests for the switch tracker, recurrence learner, control room
 tests/test_sequences.py           23 tests for the structured-sequence experts
 tests/test_conformal.py           10 tests for the conformal sets + identification converse
+tests/test_evasion.py             13 tests for the reactive evasion transmitter
+tests/test_deception.py            9 tests for decoy injection + the counter-ID boundary
+tests/test_duel.py                 7 tests for the closed-loop engagement (fair-game checks)
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)
