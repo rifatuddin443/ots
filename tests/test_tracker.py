@@ -156,6 +156,39 @@ def test_control_session_evasion_escapes_the_jammer():
     assert denial < 0.5
 
 
+def test_control_session_jammer_live_scores_a_passive_baseline():
+    """``jammer_live`` runs the predict-then-jam loop against a PASSIVE transmitter, so a
+    plain run gains ``lit``/``denied`` and serves as the scoreboard's matched baseline. On a
+    perfectly predicted LFSR tape the passive radio is denied almost every hop."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 100, p_d=1.0, p_fa=0.0, seed=11, jammer_live=True)
+    assert base.info()["closed_loop"] and base.info()["jammer_live"]
+    assert not base.evade and not base.deceive
+    base.step("lfsr", 100)
+    r = base.records[-1]
+    assert set(r) >= {"lit", "next_lit", "denied"}          # scored like a closed loop
+    assert "pressure" not in r and "decoys" not in r        # but the transmitter is passive
+    denial = np.mean([x["denied"] for x in base.records if x["hop"] > 1])
+    assert denial > 0.8                                     # the passive radio gets hammered
+
+
+def test_control_session_scoreboard_pair_is_matched_and_fair():
+    """The scoreboard pairs a passive baseline with a red-team run on the SAME seed. Deception
+    only corrupts observations, so the carrier (true channel sequence) must be identical to the
+    baseline's -- the only measured difference is the countermeasure. Evasion then drops denial."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 90, p_d=1.0, p_fa=0.0, seed=12, jammer_live=True)
+    base.step("lfsr", 90)
+    dec = ControlSession(16, 90, p_d=1.0, p_fa=0.0, seed=12, deceive=True, decoy="lcg", n_decoys=2)
+    dec.step("lfsr", 90)
+    assert base.truth == dec.truth                          # deception leaves the carrier intact
+    ev = ControlSession(16, 90, p_d=1.0, p_fa=0.0, seed=12, evade=True, max_tones=3)
+    ev.step("lfsr", 90)
+    base_denial = np.mean([r["denied"] for r in base.records if r["hop"] > 1])
+    ev_denial = np.mean([r["denied"] for r in ev.records if r["hop"] > 1])
+    assert ev_denial < base_denial - 0.3                    # fighting back measurably helps
+
+
 def test_control_session_deception_can_mislead_identification():
     """A keyed CSPRNG is correctly 'unknown'; coherent LFSR decoys drag the ID to a
     false algebraic break -- the active-adversary counterpart of the H_0 story."""

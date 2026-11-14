@@ -1071,6 +1071,17 @@ codebase; the OTS defences evaluated here are those already built (knapsack /
 conformal / reactive allocation and `H_0`), not the emitter-ID sorting that would
 blunt coherent decoys; and, as everywhere, results are simulation-only.
 
+The same two-sided engagement is playable by hand in the dashboard's **Control room**,
+where a **"Did it work?"** scoreboard makes the result legible without any EW background:
+it runs the identical radio against the identical jammer twice — passive, then with the
+chosen countermeasures (a `jammer_live` baseline paired with a red-team run on the same
+seed) — and reports the two outcomes side by side, *how often the jammer denied the true
+channel* and *whether it identified the radio*. Against a perfectly predicted LFSR this
+reproduces the batch numbers interactively: denial ≈ 0.99 collapses to ≈ 0.05–0.13, the
+jammer locks onto the decoy's family instead of the real one, and its exact next-hop
+guess falls from ≈ 0.99 to near the blind rate — the paper's three findings, visible in a
+single click.
+
 ---
 
 *Reproduce every figure and number: `python -m fhew.datagen && python -m

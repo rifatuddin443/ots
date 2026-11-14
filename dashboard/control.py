@@ -118,7 +118,8 @@ class ControlSession:
     def __init__(self, n_channels: int = 16, hops: int = 300, p_d: float = 1.0,
                  p_fa: float = 0.0, seed: int | None = None, *,
                  evade: bool = False, deceive: bool = False, decoy: str = "lfsr",
-                 n_decoys: int = 1, evade_aggr: float = 1.0, max_tones: int = 3):
+                 n_decoys: int = 1, evade_aggr: float = 1.0, max_tones: int = 3,
+                 jammer_live: bool = False):
         if not MIN_CHANNELS <= n_channels <= MAX_CHANNELS:
             raise ValueError(f"channels must be in [{MIN_CHANNELS}, {MAX_CHANNELS}]")
         if not MIN_HOPS <= hops <= MAX_HOPS:
@@ -144,7 +145,11 @@ class ControlSession:
         # --- red-team transmitter: evasion (reactive anti-jam) and deception (decoys) ---
         self.evade = bool(evade)
         self.deceive = bool(deceive)
-        self.closed_loop = self.evade or self.deceive
+        # ``jammer_live`` forces the predict-then-jam loop (barrage + per-hop denial
+        # scoring) even when the transmitter is passive, so a plain run can serve as the
+        # matched baseline the effectiveness scoreboard measures a red-team run against.
+        self.jammer_live = bool(jammer_live)
+        self.closed_loop = self.evade or self.deceive or self.jammer_live
         self.max_tones = int(_clamp(int(max_tones), 1, min(self.M, JAM_TONES_CAP)))
         self.evade_aggr = _clamp(float(evade_aggr), 0.0, 1.0)
         self.emitter: AdaptiveEvasionGenerator | None = None   # evasion wrapper over self.gen
@@ -169,10 +174,15 @@ class ControlSession:
         if fam in ("lfsr", "filtered_lfsr") and not is_power_of_two(self.M):
             fam = "markov"
         self.decoy_family = fam
-        gens = [make_generator(fam, self.M, rng=self.rng, **draw_episode_params(fam, self.rng))
+        # Draw the decoy streams from an independent RNG derived from the seed, not
+        # ``self.rng``: the carrier generator then advances identically whether or not
+        # deception is on, so the scoreboard's baseline and red-team runs share the same
+        # true hop sequence and the only difference measured is the deception itself.
+        drng = np.random.default_rng((self.seed * 2654435761 + 12345) % 2 ** 32)
+        gens = [make_generator(fam, self.M, rng=drng, **draw_episode_params(fam, drng))
                 for _ in range(self.n_decoys)]
         return DeceptionEmitter(gens[0], self.channels, DeceptionConfig(n_decoys=self.n_decoys),
-                                extra_gens=gens[1:], rng=self.rng)
+                                extra_gens=gens[1:], rng=drng)
 
     def _barrage(self, forecast: np.ndarray, kappa: float) -> list[int]:
         """The channels the jammer lights for a hop: its top-``n`` forecast ranking.
@@ -201,6 +211,7 @@ class ControlSession:
             "jam_cap": min(self.M, JAM_TONES_CAP),
             # red-team / closed-loop state
             "closed_loop": self.closed_loop, "evade": self.evade, "deceive": self.deceive,
+            "jammer_live": self.jammer_live,
             "decoy": self.decoy_family, "n_decoys": self.n_decoys, "max_tones": self.max_tones,
         }
 

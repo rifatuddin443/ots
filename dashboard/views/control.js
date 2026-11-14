@@ -154,6 +154,44 @@
 .ctl-scrub input[type=range] { flex: 1; min-width: 70px; accent-color: var(--accent); }
 .ctl-scrub .btn { padding: 4px 9px; }
 .ctl-scrub .ctl-help { margin: 0; white-space: nowrap; }
+
+/* Effectiveness scoreboard: the same radio run twice (ignoring the jammer vs fighting
+   back), so anyone can see at a glance how much the evasion / deception helped. */
+.ctl-score { border-color: rgba(192, 140, 240, 0.5); }
+.ctl-score .card-h .card-t::before { content: "🛡 "; }
+.ctl-sc-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.ctl-sc-cta .btn { white-space: nowrap; }
+.ctl-sc-cta .ctl-help { margin: 0; }
+.ctl-sc-prog { height: 10px; border-radius: 5px; background: #16233a; overflow: hidden; margin: 14px 0 4px; }
+.ctl-sc-prog > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #c08cf0); transition: width 0.25s ease; }
+.ctl-sc-prog-l { font: 500 12.5px var(--mono); color: var(--muted); }
+.ctl-sc-verdict { font: 600 19px/1.4 var(--sans); letter-spacing: -0.01em; color: var(--ink); margin: 4px 0 2px; }
+.ctl-sc-verdict b { color: var(--good-ink); font-weight: 700; }
+.ctl-sc-verdict .flat { color: var(--warning); font-weight: 700; }
+.ctl-sc-scen { font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
+.ctl-sc-scen b { color: var(--ink); font-weight: 600; }
+.ctl-sc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.ctl-sc-row { padding: 13px 15px 15px; border: 1px solid var(--grid); border-radius: 11px; background: var(--surface); }
+.ctl-sc-metric { font: 600 14.5px var(--sans); color: var(--ink); }
+.ctl-sc-metric .hint { display: block; font: 400 12px var(--sans); color: var(--muted); margin-top: 2px; }
+.ctl-sc-bar { display: grid; grid-template-columns: 92px 1fr 48px; gap: 10px; align-items: center; margin: 9px 0 0; font-size: 12.5px; }
+.ctl-sc-bar .lab { color: var(--ink-2); white-space: nowrap; }
+.ctl-sc-bar .track { position: relative; height: 18px; border-radius: 5px; background: #16233a; overflow: hidden; }
+.ctl-sc-bar .track > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; transition: width 0.6s cubic-bezier(.2,.7,.2,1); min-width: 2px; }
+.ctl-sc-bar .track > i.bad { background: var(--serious); }
+.ctl-sc-bar .track > i.good { background: var(--good-ink); }
+.ctl-sc-bar b { font: 700 14px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.ctl-sc-id { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: baseline; margin: 9px 0 0; font-size: 13px; }
+.ctl-sc-id .lab { color: var(--ink-2); white-space: nowrap; }
+.ctl-sc-id .v { font-weight: 600; }
+.ctl-sc-id .v.good { color: var(--good-ink); }
+.ctl-sc-id .v.bad { color: var(--critical-ink); }
+.ctl-sc-delta { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--grid); font: 600 13px var(--sans); color: var(--ink-2); }
+.ctl-sc-delta.good { color: var(--good-ink); }
+.ctl-sc-delta.flat { color: var(--warning); }
+.ctl-sc-foot { margin-top: 14px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
+.ctl-sc-foot b { color: var(--ink); font-weight: 600; }
+.ctl-sc-err { color: var(--critical-ink); font-size: 13px; margin-top: 10px; }
 `;
   function injectCss() {
     if (!document.getElementById("css-ctl")) document.head.append(el("style", { id: "css-ctl" }, CSS));
@@ -210,6 +248,12 @@
     algo: null,         // algorithm the transmitter should be on
     playing: false, busy: false, creating: false, speed: 3, timer: 0, error: null,
   };
+  // Effectiveness scoreboard: a self-contained A/B that runs the same radio against the
+  // same jammer twice -- once passive (ignoring it), once with the chosen countermeasures --
+  // so the gain is plain to anyone. It is independent of the interactive session above.
+  const AB_CAP = 120;   // measurement horizon cap, so a head-to-head stays snappy
+  const AB = { running: false, done: false, error: null, algo: null, hops: 0,
+    cfg: null, base: null, rt: null, doneHops: 0, totalHops: 1 };
   // Families a deceiving transmitter can mimic (in-bank, so they can fool the ID).
   const DECOY_FAMILIES = [
     { id: "lfsr", name: "LFSR" }, { id: "lcg", name: "LCG" },
@@ -1024,6 +1068,181 @@
       el("span", { class: "ctl-acc-s" }, `random guessing: ${pct(chance)}`));
   }
 
+  // ===================================================== effectiveness A/B
+  /** Reduce one arm's records to the plain outcomes the scoreboard reports. */
+  function abAgg(recs, algo) {
+    const scored = recs.filter((r) => r.hop > 1);
+    const den = scored.filter((r) => r.denied != null);
+    const t1 = scored.filter((r) => r.hit != null);
+    const last = recs[recs.length - 1];
+    const tgt = TARGET[algo];
+    const litHops = recs.filter((r) => r.lit && r.lit.length);
+    return {
+      denied: den.length ? den.filter((r) => r.denied).length / den.length : null,
+      top1: t1.length ? t1.filter((r) => r.hit).length / t1.length : null,
+      locked: !!(last && last.id.locked),
+      lockedCorrect: !!(last && last.id.locked && last.id.label === tgt),
+      label: last ? last.id.label : "unknown",
+      lockHop: last ? last.id.lock_hop : null,
+      decoys: recs.reduce((s, r) => s + (r.decoys ? r.decoys.length : 0), 0),
+      meanTones: litHops.length ? litHops.reduce((s, r) => s + r.lit.length, 0) / litHops.length : 0,
+    };
+  }
+  /** Step one fresh session (built from `query`) to `hops`, reporting progress. */
+  async function abRunArm(query, hops) {
+    const sess = await api(`api/control/new?${query}`);
+    const recs = [];
+    while (recs.length < hops) {
+      const j = await api(`api/control/step?session=${sess.session}&algo=${encodeURIComponent(AB.algo)}&n=25`);
+      recs.push(...j.records);
+      AB.doneHops += j.records.length; refresh();
+      if (j.done || !j.records.length) break;
+    }
+    return { sess, recs };
+  }
+  /** Run the head-to-head: the same radio, same jammer, passive vs fighting back. */
+  async function measureEffectiveness() {
+    if (!OTS.live || AB.running) return;
+    pause();
+    const M = S.cfg.M, hops = Math.min(S.cfg.hops, AB_CAP), s = sensorOf(S.cfg);
+    const algo = S.algo && algoAvailable(S.algo) ? S.algo : (pow2(M) ? "lfsr" : "markov");
+    // measure the levers the operator has chosen; if none, preview both so the effect shows
+    let evade = !!S.cfg.evade, deceive = !!S.cfg.deceive, decoy = S.cfg.decoy;
+    const defaulted = !evade && !deceive;
+    if (defaulted) {
+      evade = true; deceive = true;
+      // preview a decoy family that differs from the radio under test, so deception can
+      // actually mislead the identification (a decoy of the same family just reinforces it)
+      decoy = ["lcg", "weak_seed", "markov", "lfsr"].find((d) => d !== TARGET[algo] && (d !== "lfsr" || pow2(M))) || "lcg";
+    }
+    const nDecoys = S.cfg.nDecoys, mt = Math.min(maxTones, Math.min(M, JAM_CAP_MAX));
+    Object.assign(AB, { running: true, done: false, error: null, algo, hops,
+      cfg: { evade, deceive, decoy, nDecoys, defaulted, M, hops, capped: S.cfg.hops > AB_CAP,
+        sensorName: s.id === "perfect" ? "perfect" : s.name.toLowerCase() },
+      base: null, rt: null, doneHops: 0, totalHops: 2 * hops });
+    refresh();
+    try {
+      const common = `channels=${M}&hops=${hops}&p_d=${s.p_d}&p_fa=${s.p_fa}&max_tones=${mt}`;
+      const base = await abRunArm(`${common}&evade=0&deceive=0&jammer_live=1`, hops);
+      AB.base = abAgg(base.recs, algo);
+      // the red-team run faces the SAME scenario (same seed), so only the countermeasure differs
+      const rt = await abRunArm(`${common}&evade=${evade ? 1 : 0}&deceive=${deceive ? 1 : 0}`
+        + `&decoy=${encodeURIComponent(decoy)}&n_decoys=${nDecoys}&seed=${base.sess.seed}`, hops);
+      AB.rt = abAgg(rt.recs, algo);
+      AB.done = true;
+    } catch (err) {
+      AB.error = err.message;
+    } finally {
+      AB.running = false; refresh();
+    }
+  }
+  /** Plain-English headline: what fighting back actually bought you. */
+  function scoreVerdict() {
+    const b = AB.base, r = AB.rt, wins = [];
+    if (b.denied != null && r.denied != null && b.denied - r.denied > 0.08) {
+      const rel = Math.round(((b.denied - r.denied) / Math.max(b.denied, 1e-6)) * 100);
+      wins.push(["cut the jammer's hits by ", el("b", {}, `${rel}%`)]);
+    }
+    if (b.lockedCorrect && !r.lockedCorrect) wins.push(["stopped it from identifying your radio"]);
+    else if (b.lockedCorrect && r.lockedCorrect === false && r.locked) wins.push(["tricked it into the wrong radio"]);
+    if (!wins.length) {
+      return el("div", { class: "ctl-sc-verdict" }, "Fighting back ", el("span", { class: "flat" }, "made little difference"),
+        " in this run — try a more predictable algorithm (LFSR, LCG, weak-seed) or turn on both levers.");
+    }
+    const parts = ["Fighting back "];
+    wins.forEach((w, i) => { if (i) parts.push(wins.length > 2 || i < wins.length - 1 ? ", " : " and "); parts.push(...w); });
+    parts.push(".");
+    return el("div", { class: "ctl-sc-verdict" }, parts);
+  }
+  function denialBar(label, val, cls) {
+    const pctv = val == null ? null : Math.round(val * 100);
+    return el("div", { class: "ctl-sc-bar" }, el("span", { class: "lab" }, label),
+      el("div", { class: "track" }, el("i", { class: cls, style: `width:${val == null ? 0 : (val * 100).toFixed(1)}%` })),
+      el("b", {}, pctv == null ? "—" : `${pctv}%`));
+  }
+  /** One arm's identification outcome as a coloured verdict (bad for you = jammer won). */
+  function idOutcome(a, forYouGood) {
+    if (a.lockedCorrect) return { txt: `✓ Yes — ${idName(a.label)}${a.lockHop ? `, by hop ${a.lockHop}` : ""}`, good: false };
+    if (a.locked) return { txt: `✗ Fooled — locked onto ${idName(a.label)} (a decoy)`, good: true };
+    return { txt: "✗ No — never locked on", good: true };
+  }
+  function renderScore(box) {
+    OTS.clear(box);
+    box.append(el("div", { class: "card-h" }, el("div", {},
+      el("p", { class: "card-t" }, "Did it work?"),
+      el("p", { class: "card-d" }, "Runs the same radio against the same jammer twice — once ignoring it, once fighting back — so you can see the difference at a glance."))));
+    const body = el("div");
+    box.append(body);
+    const levers = () => {
+      const c = AB.cfg || { evade: !!S.cfg.evade || (!S.cfg.evade && !S.cfg.deceive), deceive: !!S.cfg.deceive || (!S.cfg.evade && !S.cfg.deceive),
+        decoy: S.cfg.decoy, nDecoys: S.cfg.nDecoys, defaulted: !S.cfg.evade && !S.cfg.deceive };
+      const bits = [c.evade ? "evasion" : null, c.deceive ? `${c.nDecoys}× ${(DECOY_FAMILIES.find((d) => d.id === c.decoy) || {}).name || c.decoy} decoys` : null].filter(Boolean);
+      return bits.join(" + ");
+    };
+    if (!OTS.live) { body.append(el("div", { class: "ctl-help" }, "Start the live server to measure effectiveness.")); return; }
+    // call to action + progress
+    const algoNow = S.algo && algoAvailable(S.algo) ? S.algo : (pow2(S.cfg.M) ? "lfsr" : "markov");
+    const btn = el("button", { class: "btn primary", onclick: measureEffectiveness, disabled: AB.running },
+      AB.running ? [el("span", { class: "spin" }), " Measuring…"] : AB.done ? "⟲ Measure again" : "▶ Measure how much it helped");
+    body.append(el("div", { class: "ctl-sc-cta" }, btn,
+      el("span", { class: "ctl-help" }, AB.running ? "" : ["Tests ", el("b", { style: "color:var(--ink)" }, algoName(algoNow)),
+        " with ", el("b", { style: "color:var(--ink)" }, levers()), (!S.cfg.evade && !S.cfg.deceive) ? " (preview — toggle levers in the Transmitter card)" : ""])));
+    if (AB.running) {
+      const frac = AB.totalHops ? AB.doneHops / AB.totalHops : 0;
+      body.append(el("div", { class: "ctl-sc-prog" }, el("i", { style: `width:${(frac * 100).toFixed(0)}%` })),
+        el("div", { class: "ctl-sc-prog-l" }, `running ${AB.doneHops < AB.hops ? "the passive radio" : "the radio fighting back"} · ${Math.min(AB.doneHops, AB.totalHops)} / ${AB.totalHops} hops`));
+      return;
+    }
+    if (AB.error) { body.append(el("div", { class: "ctl-sc-err" }, "Could not measure: " + AB.error)); return; }
+    if (!AB.done || !AB.base || !AB.rt) {
+      body.append(el("div", { class: "ctl-sc-foot" }, "Press ", el("b", {}, "Measure"),
+        " to run the head-to-head. The jammer is identical in both runs; the only thing that changes is whether your transmitter fights back."));
+      return;
+    }
+    // --- results ---
+    const b = AB.base, r = AB.rt, c = AB.cfg;
+    body.append(scoreVerdict(),
+      el("div", { class: "ctl-sc-scen" }, "Same radio (", el("b", {}, algoName(AB.algo)), "), same jammer, same ",
+        el("b", {}, `${AB.hops} hops`), ", ", el("b", {}, c.sensorName + " sensor"), " — with ", el("b", {}, levers()),
+        c.defaulted ? " (both previewed)" : "", "."));
+    const rows = el("div", { class: "ctl-sc-grid" });
+    // Row 1 -- how often the jammer landed on you (evasion's headline)
+    const denDrop = b.denied != null && r.denied != null ? b.denied - r.denied : null;
+    const denCls = denDrop != null && denDrop > 0.08 ? "good" : "flat";
+    rows.append(el("div", { class: "ctl-sc-row" },
+      el("div", { class: "ctl-sc-metric" }, "Jammer jammed your signal",
+        el("span", { class: "hint" }, "how often the jammer sat on the channel you used")),
+      denialBar("Ignoring it", b.denied, "bad"), denialBar("Fighting back", r.denied, "good"),
+      el("div", { class: "ctl-sc-delta " + denCls }, denDrop == null ? "—"
+        : denDrop > 0.08 ? `↓ ${Math.round((denDrop / Math.max(b.denied, 1e-6)) * 100)}% fewer hits — the radio slipped the barrage`
+        : "about the same — this lever works on identification, not dodging")));
+    // Row 2 -- could the jammer identify your radio (deception's headline)
+    const bo = idOutcome(b), ro = idOutcome(r);
+    const idWin = (b.lockedCorrect && !r.lockedCorrect);
+    rows.append(el("div", { class: "ctl-sc-row" },
+      el("div", { class: "ctl-sc-metric" }, "Jammer identified your radio",
+        el("span", { class: "hint" }, "could it name the algorithm and lock onto it?")),
+      el("div", { class: "ctl-sc-id" }, el("span", { class: "lab" }, "Ignoring it"), el("span", { class: "v " + (bo.good ? "good" : "bad") }, bo.txt)),
+      el("div", { class: "ctl-sc-id" }, el("span", { class: "lab" }, "Fighting back"), el("span", { class: "v " + (ro.good ? "good" : "bad") }, ro.txt)),
+      el("div", { class: "ctl-sc-delta " + (idWin ? "good" : "flat") }, idWin
+        ? (r.locked ? "the jammer committed to the wrong radio" : "the jammer could never commit")
+        : b.lockedCorrect ? "the jammer still pinned it this run" : "the jammer couldn't pin it either way")));
+    body.append(rows);
+    // footer: the quieter wins (decoys swallowed, a wrong commit, spread, exact-guess collapse)
+    const foot = [];
+    if (c.deceive && r.decoys > 0) {
+      const bits = ["The jammer swallowed ", el("b", {}, `${r.decoys} fake detections`), "."];
+      if (r.locked && !r.lockedCorrect) bits.push(" It committed to ", el("b", {}, idName(r.label)),
+        " — one of your decoys — instead of your real ", el("b", {}, algoName(AB.algo)), ".");
+      foot.push(bits);
+    }
+    if (r.meanTones - b.meanTones > 0.3) foot.push(["Forced to spread: the jammer lit ", el("b", {}, `${r.meanTones.toFixed(1)} frequencies`),
+      " per hop vs ", el("b", {}, b.meanTones.toFixed(1)), " before — more power spent, less focus."]);
+    if (b.top1 != null && r.top1 != null) foot.push(["Its exact next-channel guess fell from ",
+      el("b", {}, pct(b.top1)), " to ", el("b", {}, pct(r.top1)), " (a blind guess would be ≈ ", pct(1 / c.M), ")."]);
+    if (foot.length) body.append(el("div", { class: "ctl-sc-foot" }, foot.map((f) => el("span", {}, f, " "))));
+  }
+
   function offline() {
     return el("div", { class: "card accent" },
       el("p", { class: "card-t" }, "Live engine needed"),
@@ -1044,6 +1263,7 @@
       const note = el("div");
       const panel = el("aside", { class: "ctl-panel", "aria-label": "Control room settings" }), tx = el("div", { class: "ctl-txpanel" });
       const acc = el("div", { class: "card ctl-acc", "aria-label": "Next-hop barrage accuracy" });
+      const scoreBox = el("div", { class: "card ctl-score", "aria-label": "Countermeasure effectiveness scoreboard" });
       const hopLegendBox = el("div", { style: "min-height:26px" }), hopBox = el("div", { class: "ctl-hop" });
       const scrubBox = el("div", { class: "ctl-scrub", "aria-label": "Scroll back through past hops" });
       // the run/pause control sits on the chart itself, so the hops can be stopped at a glance
@@ -1070,7 +1290,7 @@
       const tab = el("button", { class: "ctl-tab", onclick: () => setOpen(true), title: "Open settings (S)" }, "⚙ Settings");
       const backdrop = el("div", { class: "ctl-backdrop", onclick: () => setOpen(false) });
       const shell = el("div", { class: "ctl-shell" },
-        el("div", { class: "page ctl-page" }, note, acc,
+        el("div", { class: "page ctl-page" }, note, acc, scoreBox,
           el("div", { class: "ctl-cols" }, el("div", { class: "ctl-col" }, hopCard, tlCard), el("div", { class: "ctl-col" }, sys, logCard)),
           tableCard),
         panel, backdrop, tab);
@@ -1116,7 +1336,7 @@
         render() {
           note.hidden = OTS.live;
           if (!OTS.live && !note.firstChild) note.append(offline());
-          updatePanel(); updateTx(); syncRun(runBtn); renderAcc(acc); renderCharts(); updateScrub();
+          updatePanel(); updateTx(); syncRun(runBtn); renderAcc(acc); renderScore(scoreBox); renderCharts(); updateScrub();
           renderSystem(sys); renderLog(logBox); renderTable(tableBox);
           const sw = S.recs.filter((r) => r.switch_detected).length;
           if (sw > lastSwitch) { sys.classList.remove("ctl-flash"); void sys.offsetWidth; sys.classList.add("ctl-flash"); }

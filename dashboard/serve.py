@@ -78,7 +78,7 @@ def control_new(query: dict) -> dict:
         seed=int(query["seed"][0]) if "seed" in query else None,
         evade=_flag(query, "evade"), deceive=_flag(query, "deceive"),
         decoy=_arg(query, "decoy", "lfsr"), n_decoys=int(_arg(query, "n_decoys", "1")),
-        max_tones=int(_arg(query, "max_tones", "3")))
+        max_tones=int(_arg(query, "max_tones", "3")), jammer_live=_flag(query, "jammer_live"))
     sid = f"s{next(_SESSION_IDS)}"
     _SESSIONS[sid] = session
     while len(_SESSIONS) > _MAX_SESSIONS:

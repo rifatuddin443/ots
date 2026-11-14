@@ -11,6 +11,38 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-14 — "Did it work?" effectiveness scoreboard (Control room)
+
+Makes the red-team payoff self-evident to any viewer: a one-click **head-to-head** that
+runs the same radio against the same jammer twice — once ignoring it, once fighting back —
+and reports the gain in plain language and bars, no EW background needed.
+
+- `dashboard/control.py` — `ControlSession` gains a `jammer_live` flag that runs the
+  predict-then-jam loop (barrage + per-hop `denied` scoring) against a **passive**
+  transmitter, so a plain run can serve as the matched baseline the scoreboard measures
+  against. The deception emitter now draws its decoys from a seed-derived **independent**
+  RNG, so the carrier (true hop sequence) is identical with or without decoys and the only
+  thing a baseline-vs-red-team pair differs by is the countermeasure.
+- `dashboard/serve.py` — `/api/control/new` parses `jammer_live`.
+- `dashboard/views/control.js` — a **"Did it work?"** card above the hop chart. It drives
+  two matched shadow sessions (same seed, same algorithm — one passive, one with the
+  chosen levers) in lockstep with a live progress bar, then shows: a plain headline
+  (*"Fighting back cut the jammer's hits by 93% and stopped it from identifying your
+  radio"*), a **Jammer jammed your signal** bar pair (ignoring vs fighting back), a
+  **Jammer identified your radio** verdict pair (locked correctly / fooled onto a decoy /
+  never locked), and a footer (fakes swallowed, a wrong commit, spread, exact-guess
+  collapse). With no levers set it previews evasion + a contrasting decoy family.
+- Tests: 2 new in `tests/test_tracker.py` (`jammer_live` scores a passive baseline;
+  the scoreboard pair is matched/fair — deception leaves the carrier intact, evasion
+  drops denial). Full suite 204 → 206.
+
+Observed (M=16, perfect sensor, 120 hops, LFSR): passive radio jammed ≈ 99 % and
+identified by hop 5–6; with evasion + one contrasting decoy, jammed ≈ 5–13 %, the jammer
+locks onto the decoy's family (wrong radio), and its exact next-channel guess falls from
+≈ 99 % to ≈ 4–10 % (blind ≈ 6 %).
+
+---
+
 ## 2026-11-14 — Control room drives the closed-loop adversary (dashboard)
 
 The red-team components (evasion, deception) are now playable in the dashboard's
