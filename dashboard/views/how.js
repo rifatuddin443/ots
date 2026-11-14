@@ -338,6 +338,7 @@
         row([`1–${nViews}`], "Switch page (in the order of the side menu)"),
         row(["G"], "Start or stop the guided demo"),
         row(["F"], "Full screen"),
+        row(["M"], "Minimize or expand the side menu"),
         grp(playerPages.length ? `On the ${playerPages.join(" and ")} pages` : "On player pages"),
         row(["Space"], "Play or pause"),
         row(["←", "→"], "Step one hop back or forward"),

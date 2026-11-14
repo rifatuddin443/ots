@@ -26,9 +26,20 @@
     </a>
     <div class="nav" id="nav"></div>
     <div class="side-foot">
+      <div class="side-ctl" role="group" aria-label="Sidebar layout">
+        <span class="side-ctl-l">Sidebar</span>
+        <div class="side-ctl-row">
+          <div class="seg side-dock" role="group" aria-label="Sidebar side">
+            <button class="btn" id="sideLeftBtn" type="button" title="Keep the sidebar on the left">◧ Left</button>
+            <button class="btn" id="sideRightBtn" type="button" title="Put the sidebar on the right">Right ◨</button>
+          </div>
+          <button class="btn icon" id="sideMinBtn" type="button"></button>
+          <button class="btn icon side-swap" id="sideSwapBtn" type="button">⇄</button>
+        </div>
+      </div>
       <span class="chip" id="modeChip" title="Replay: recorded real runs. Live: new runs computed by the Python bank."><span class="dot"></span><span id="modeText">Replay</span></span>
       <span id="dataStamp"></span>
-      <span>Shortcuts: <kbd>1</kbd>…<kbd>8</kbd> pages<br><kbd>Space</kbd> play · <kbd>G</kbd> guided demo<br><kbd>S</kbd> settings · <kbd>F</kbd> full screen</span>
+      <span>Shortcuts: <kbd>1</kbd>…<kbd>8</kbd> pages<br><kbd>Space</kbd> play · <kbd>G</kbd> guided demo<br><kbd>S</kbd> settings · <kbd>F</kbd> full screen<br><kbd>M</kbd> minimize sidebar</span>
     </div>
   </nav>
 

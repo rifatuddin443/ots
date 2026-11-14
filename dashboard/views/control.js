@@ -40,6 +40,7 @@
   font: 700 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; box-shadow: -6px 0 20px rgba(0, 0, 0, 0.35);
 }
 .ctl-tab:hover { background: var(--raise); }
+@media (min-width: 861px) { .side-right .ctl-tab { right: var(--side-w); } }   /* clear of a right-docked page menu */
 .ctl-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ctl-backdrop { display: none; }
 .ctl-chip { cursor: pointer; text-transform: none; letter-spacing: 0.02em; font-weight: 600; }
@@ -434,7 +435,7 @@
     const ih = Math.round(clamp(220 + iw * 0.18, 240, 400)), rowH = ih / M, H = m.t + ih + m.b;
     const first = end - N + 1;                       // hop number shown in column 0
     const cx = (col) => m.l + (col + 0.5) * colW, cy = (ch) => m.t + ih - (ch + 0.5) * rowH;
-    const truthOn = !!OTS.prefs.truth, pathOn = !!OTS.prefs.path;
+    const truthOn = !!OTS.prefs.truth, pathOn = !!OTS.prefs.path, hideCaught = !!OTS.prefs.hideCaughtExtras;
     const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
       "aria-label": t ? `Hop chart, hops ${Math.max(1, first)} to ${end}: sensor detections, the system's calls and the next-hop call.` : "Hop chart: waiting for the first hop." });
     const yStep = Math.max(1, Math.ceil(13 / rowH));
@@ -494,10 +495,13 @@
       const bar = callFor(h);   // the barrage called for this hop (empty for hop 1)
       if (bar.length) {
         const caught = bar.includes(r.truth);
-        bar.slice(1).forEach((ch) => g.append(barBar(ch, x0, 0.55)));
+        // the extra channels, one amber bar each. With "hide on caught hops" on, a caught
+        // hop drops them, except the one extra channel that made the catch (if any)
+        const extras = hideCaught && caught ? bar.slice(1).filter((ch) => ch === r.truth) : bar.slice(1);
+        extras.forEach((ch) => g.append(barBar(ch, x0, 0.55)));
         g.append(svg("circle", { cx: x, cy: cy(bar[0]), r: ringR, fill: "none", stroke: caught ? acc : bad, "stroke-width": 2, opacity: caught ? 1 : 0.85 }));
         if (caught) seen.hit = true; else seen.miss = true;
-        if (bar.length > 1) seen.jam = true;
+        if (extras.length) seen.jam = true;
       }
       if (truthOn && !r.dets.includes(r.truth)) {
         g.append(svg("circle", { cx: x, cy: cy(r.truth), r: dotR + 2, fill: "none", stroke: "rgba(200, 215, 235, 0.8)", "stroke-width": 1.3, "stroke-dasharray": "2 2" }));
@@ -868,6 +872,8 @@
     const toggles = [prefToggle("Reveal sensor mistakes (ghosts, missed hops)", "truth"), prefToggle("Show the true path", "path")];
     // The red-team controls (Evade / Deceive) live in the Transmitter card at the top
     // of the panel (see makeTx), where the operator drives the radio -- not buried here.
+    const hideExtras = prefToggle("Hide extra barrage channels on hops the call caught", "hideCaughtExtras");
+    const hideHelp = el("div", { class: "ctl-help" }, "Clears the amber boxes where the prediction was right. If an extra channel made the catch, only that one stays. Misses and the NEXT call keep the full barrage.");
     const sec = (label, ...kids) => el("div", { class: "ctl-psec" }, el("div", { class: "ctl-group-l" }, label), kids);
     panel.append(
       el("div", { class: "ctl-panel-h" }, el("h2", {}, "Settings"),
@@ -876,14 +882,14 @@
       sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
       sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
       sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
-      sec("Barrage · max transmit freqs", jamBox, jamHelp),
+      sec("Barrage · max transmit freqs", jamBox, jamHelp, el("div", { style: "margin-top:10px" }, hideExtras.node), hideHelp),
       sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
       sec("Show on the chart", toggles.map((x) => x.node),
         el("div", { class: "ctl-help" }, "The system never sees these: they are drawn for you.")));
     let helpKey = "", btnKey = "";
     return function update() {
       toggleSel(speeds, (v) => v === S.speed);
-      for (const x of toggles) x.inp.checked = !!OTS.prefs[x.key];
+      for (const x of [...toggles, hideExtras]) x.inp.checked = !!OTS.prefs[x.key];
       toggleSel(chM, (v) => v === S.cfg.M); toggleSel(chH, (v) => v === S.cfg.hops); toggleSel(sensors, (v) => v === S.cfg.sensor);
       if (document.activeElement !== inM) inM.value = S.cfg.M;
       if (document.activeElement !== inH) inH.value = S.cfg.hops;

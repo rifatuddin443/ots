@@ -736,6 +736,38 @@ window.OTS = (function () {
     inp.addEventListener("change", () => OTS.setPref(key, inp.checked));
     return OTS.el("label", { class: "switch" }, inp, label);
   }
+  // ======================================================= sidebar layout
+  // Two options for the page menu on wide screens: dock it on the left or the right
+  // edge, and minimize it to an icon rail (page names stay in the tooltips).
+  const SIDE_KEY = "ots.sidebar.v1";
+  const side = { min: false, right: false };
+  try { Object.assign(side, JSON.parse(localStorage.getItem(SIDE_KEY) || "{}")); } catch (_) { /* storage unavailable */ }
+  function applySidebar() {
+    const shell = OTS.$(".shell");
+    shell.classList.toggle("side-min", !!side.min);
+    shell.classList.toggle("side-right", !!side.right);
+    const minBtn = OTS.$("#sideMinBtn"), swap = OTS.$("#sideSwapBtn");
+    const inward = side.right ? "»" : "«", outward = side.right ? "«" : "»";   // arrows point the way it folds
+    minBtn.textContent = side.min ? outward : inward;
+    minBtn.title = (side.min ? "Expand the sidebar" : "Minimize the sidebar") + " (M)";
+    minBtn.setAttribute("aria-label", side.min ? "Expand the sidebar" : "Minimize the sidebar");
+    minBtn.setAttribute("aria-expanded", side.min ? "false" : "true");
+    swap.title = side.right ? "Move the sidebar to the left" : "Move the sidebar to the right";
+    swap.setAttribute("aria-label", swap.title);
+    for (const [id, on] of [["#sideLeftBtn", !side.right], ["#sideRightBtn", !!side.right]]) {
+      const b = OTS.$(id); b.classList.toggle("sel", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+  /** Change the sidebar layout: patch = { min?: bool, right?: bool }. Saved per browser. */
+  OTS.setSidebar = (patch) => {
+    Object.assign(side, patch);
+    try { localStorage.setItem(SIDE_KEY, JSON.stringify(side)); } catch (_) { /* ignore */ }
+    applySidebar();
+    // the page area changed width: charts that size themselves on resize redraw
+    requestAnimationFrame(() => { OTS.emit("resize"); window.dispatchEvent(new Event("resize")); });
+  };
+  OTS.sidebar = () => ({ ...side });
+
   OTS.renderDrawer = renderDrawer;
   OTS.openDrawer = (open) => {
     const s = OTS.$(".shell"); s.classList.toggle("drawer-open", open == null ? !s.classList.contains("drawer-open") : open);
@@ -750,6 +782,7 @@ window.OTS = (function () {
     if (n >= 1 && n <= VIEWS.length) { OTS.views.go(VIEWS[n - 1].id); return; }
     if (k === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); return; }
     if (k === "g") { tour.active ? tour.stop() : tour.start(); return; }
+    if (k === "m") { OTS.setSidebar({ min: !side.min }); return; }
     if (!v || !v.usesPlayer) return;
     if (k === " ") { e.preventDefault(); P.toggle(); }
     else if (k === "arrowright") { tour.stop(); P.pause(); P.step(1); }
@@ -770,6 +803,11 @@ window.OTS = (function () {
     OTS.$("#settingsBtn").addEventListener("click", () => OTS.openDrawer());
     OTS.$("#drawerClose").addEventListener("click", () => OTS.openDrawer(false));
     OTS.$(".drawer-backdrop").addEventListener("click", () => OTS.openDrawer(false));
+    OTS.$("#sideMinBtn").addEventListener("click", () => OTS.setSidebar({ min: !side.min }));
+    OTS.$("#sideSwapBtn").addEventListener("click", () => OTS.setSidebar({ right: !side.right }));
+    OTS.$("#sideLeftBtn").addEventListener("click", () => OTS.setSidebar({ right: false }));
+    OTS.$("#sideRightBtn").addEventListener("click", () => OTS.setSidebar({ right: true }));
+    applySidebar();
     for (const e of ["tick", "state", "load"]) OTS.on(e, renderTransport);
     OTS.on("load", renderDrawer);
     document.addEventListener("keydown", onKey);
