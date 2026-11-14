@@ -11,6 +11,40 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-14 — Control room drives the closed-loop adversary (dashboard)
+
+The red-team components (evasion, deception) are now playable in the dashboard's
+**Control room**, so the two-sided engagement can be driven by hand, not only in the
+batch experiments.
+
+- `dashboard/control.py` — `ControlSession` gains `evade`, `deceive`, `decoy`,
+  `n_decoys`, `max_tones`. With either adversary flag on it runs a genuine closed
+  loop: the jammer's barrage for a hop is backend-authoritative (`_barrage`, the same
+  spot↔barrage rule the UI uses), the transmitter is wrapped in
+  `fhew.evasion.AdaptiveEvasionGenerator` and reacts to the *previous* hop's jamming
+  (deflect / spread; a manual algorithm switch is the re-key, so auto-rekey is off),
+  and `fhew.deception.DeceptionEmitter` overlays coherent decoys on the sensor
+  stream. Each record now carries `lit` / `next_lit` / `denied` / `decoys` /
+  `pressure`. With no flags the session is byte-for-byte the old open-loop one.
+- `dashboard/serve.py` — `/api/control/new` parses the new flags.
+- `dashboard/views/control.js` — a **Adversary · red team** settings section (Evade /
+  Deceive toggles, decoy family + count); the barrage overlay and denial now read the
+  backend's closed-loop plan (`lit` / `next_lit`); planted decoys are drawn as purple
+  diamonds (legend + tooltip); the accuracy banner reframes to **jammer denial** with
+  a "transmitter fighting back" line; the system view shows evasion pressure and
+  decoys-per-hop; the event log notes the red-team mode. All closed-loop fields are
+  session-scoped, so toggling one starts a new session (like channels/hops).
+- CLI: `python -m dashboard.control --evade` / `--deceive --decoy lfsr --n-decoys 3`
+  (prints a jammer-denial line). Tests: 4 new in `tests/test_tracker.py` (shape,
+  back-compat, evasion escapes the jammer, deception drags the ID to a false break).
+
+Observed in the Control room (M=16, perfect/strong sensor): evasion turns a fully
+jammed LFSR (denial ≈ 1.0, next-hop ≈ 0.98) into one denied ≈ 0.15–0.22 with next-hop
+≈ 0.10; three LFSR decoys flip a keyed CSPRNG's identification from the correct
+*unknown* to a false *LFSR* break.
+
+---
+
 ## 2026-11-14 — Closed-loop adversary: jammer evasion + counter-ID deception (exp26, exp27)
 
 The whole repo up to here scores the OTS against a **fixed tape** — a hop sequence

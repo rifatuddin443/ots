@@ -67,11 +67,18 @@ def _arg(query: dict, key: str, default: str) -> str:
     return query.get(key, [default])[0]
 
 
+def _flag(query: dict, key: str) -> bool:
+    return _arg(query, key, "0").lower() in ("1", "true", "yes", "on")
+
+
 def control_new(query: dict) -> dict:
     session = CR.ControlSession(
         n_channels=int(_arg(query, "channels", "16")), hops=int(_arg(query, "hops", "300")),
         p_d=float(_arg(query, "p_d", "1")), p_fa=float(_arg(query, "p_fa", "0")),
-        seed=int(query["seed"][0]) if "seed" in query else None)
+        seed=int(query["seed"][0]) if "seed" in query else None,
+        evade=_flag(query, "evade"), deceive=_flag(query, "deceive"),
+        decoy=_arg(query, "decoy", "lfsr"), n_decoys=int(_arg(query, "n_decoys", "1")),
+        max_tones=int(_arg(query, "max_tones", "3")))
     sid = f"s{next(_SESSION_IDS)}"
     _SESSIONS[sid] = session
     while len(_SESSIONS) > _MAX_SESSIONS:

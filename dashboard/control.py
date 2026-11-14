@@ -26,8 +26,11 @@ import numpy as np
 
 from dashboard import traces as T
 from experiments.common import draw_episode_params
+from fhew.allocator import tones_from_confidence
 from fhew.channels import ChannelSet
 from fhew.config import GENERATOR_TARGET_FAMILY
+from fhew.deception import DECOY_ID, DeceptionConfig, DeceptionEmitter
+from fhew.evasion import AdaptiveEvasionGenerator, EvasionConfig, JammingFeedback
 from fhew.generators import make_generator
 from fhew.sensor import SensorModel
 from fhew.tracker import ExpertLibrary, SwitchTracker, is_power_of_two
@@ -39,6 +42,14 @@ MIN_HOPS, MAX_HOPS = 20, 1000
 #: the per-hop ``jam`` ranking is capped at this, and the UI's "max transmit freqs"
 #: control runs 1..min(M, JAM_TONES_CAP).
 JAM_TONES_CAP = 8
+
+#: the system calls ONE channel only when it is at least this sure of its top one;
+#: below this it spreads to a barrage (mirrors SURE_P in views/control.js). In a
+#: closed-loop engagement this barrage is what the transmitter's evasion dodges.
+SURE_P = 0.9
+
+#: how many coherent decoy streams a deceiving transmitter may lay down at once
+MAX_DECOYS = 3
 
 #: algorithms the transmitter can run (the dashboard's emitter list)
 ALGORITHMS = [{**e, "target": GENERATOR_TARGET_FAMILY[e["id"]],
@@ -80,11 +91,34 @@ def _r(x: float, nd: int = 4) -> float:
     return round(float(x), nd)
 
 
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def evasion_config(aggr: float) -> EvasionConfig:
+    """Map an aggressiveness scalar in ``[0, 1]`` to an :class:`EvasionConfig`.
+
+    Auto re-keying is disabled (``rekey_pressure`` above 1): in the control room the
+    operator re-keys the radio by switching its algorithm, so the evasion layer only
+    deflects off jammed channels and spreads its hops under pressure.
+    """
+    a = _clamp(float(aggr), 0.0, 1.0)
+    lerp = lambda lo, hi: lo + (hi - lo) * a  # noqa: E731
+    return EvasionConfig(
+        avoid_threshold=lerp(0.6, 0.15),
+        entropy_pressure=lerp(0.85, 0.25),
+        rekey_pressure=9.0,              # manual algorithm switches are the re-keys
+        feedback_mode="spectrum",
+    )
+
+
 class ControlSession:
     """One engagement whose transmitter algorithm you choose hop by hop."""
 
     def __init__(self, n_channels: int = 16, hops: int = 300, p_d: float = 1.0,
-                 p_fa: float = 0.0, seed: int | None = None):
+                 p_fa: float = 0.0, seed: int | None = None, *,
+                 evade: bool = False, deceive: bool = False, decoy: str = "lfsr",
+                 n_decoys: int = 1, evade_aggr: float = 1.0, max_tones: int = 3):
         if not MIN_CHANNELS <= n_channels <= MAX_CHANNELS:
             raise ValueError(f"channels must be in [{MIN_CHANNELS}, {MAX_CHANNELS}]")
         if not MIN_HOPS <= hops <= MAX_HOPS:
@@ -107,6 +141,56 @@ class ControlSession:
         self.regimes: list[dict] = []     # what the transmitter ran, for the audience
         self.records: list[dict] = []
 
+        # --- red-team transmitter: evasion (reactive anti-jam) and deception (decoys) ---
+        self.evade = bool(evade)
+        self.deceive = bool(deceive)
+        self.closed_loop = self.evade or self.deceive
+        self.max_tones = int(_clamp(int(max_tones), 1, min(self.M, JAM_TONES_CAP)))
+        self.evade_aggr = _clamp(float(evade_aggr), 0.0, 1.0)
+        self.emitter: AdaptiveEvasionGenerator | None = None   # evasion wrapper over self.gen
+        self.prev_fb: JammingFeedback | None = None            # last hop's jamming feedback
+        self._pending_lit: list[int] = []                      # barrage planned for the next hop
+        # The decoy transmitter: one or more coherent streams following an in-bank
+        # family, radiating continuously (across the operator's manual switches).
+        self.decoy_family = decoy if decoy in _ALGO_IDS else "lfsr"
+        self.n_decoys = int(_clamp(int(n_decoys), 1, MAX_DECOYS))
+        self.decoyer: DeceptionEmitter | None = None
+        if self.deceive:
+            self.decoyer = self._build_decoyer()
+
+    def _build_decoyer(self) -> DeceptionEmitter:
+        """A deception emitter with ``n_decoys`` distinct coherent decoy streams.
+
+        If the chosen decoy family needs a power-of-two channel count it is not
+        available for, fall back to a Markov decoy so deception always has something
+        to lay down.
+        """
+        fam = self.decoy_family
+        if fam in ("lfsr", "filtered_lfsr") and not is_power_of_two(self.M):
+            fam = "markov"
+        self.decoy_family = fam
+        gens = [make_generator(fam, self.M, rng=self.rng, **draw_episode_params(fam, self.rng))
+                for _ in range(self.n_decoys)]
+        return DeceptionEmitter(gens[0], self.channels, DeceptionConfig(n_decoys=self.n_decoys),
+                                extra_gens=gens[1:], rng=self.rng)
+
+    def _barrage(self, forecast: np.ndarray, kappa: float) -> list[int]:
+        """The channels the jammer lights for a hop: its top-``n`` forecast ranking.
+
+        Sure (top channel at least ``SURE_P``) -> one spot tone; unsure -> a barrage
+        that grows with the uncertainty up to ``max_tones``. This mirrors the UI's
+        barrage rule exactly, and in a closed-loop run it is what the transmitter's
+        evasion tries to dodge and what scores the denial.
+        """
+        order = np.argsort(forecast)[::-1]
+        top = int(order[0]); top_p = float(forecast[top])
+        cap = min(self.M, self.max_tones)
+        if cap < 2 or top_p >= SURE_P:
+            n = 1
+        else:
+            n = int(_clamp(tones_from_confidence(float(kappa), cap), 2, cap))
+        return [int(c) for c in order[:n]]
+
     # ---------------------------------------------------------------- metadata
     def info(self) -> dict:
         return {
@@ -115,6 +199,9 @@ class ControlSession:
             "labels": self.labels, "algorithms": algorithms_for(self.M),
             "segments_protected": self.tracker.protect, "build_seconds": self.build_seconds,
             "jam_cap": min(self.M, JAM_TONES_CAP),
+            # red-team / closed-loop state
+            "closed_loop": self.closed_loop, "evade": self.evade, "deceive": self.deceive,
+            "decoy": self.decoy_family, "n_decoys": self.n_decoys, "max_tones": self.max_tones,
         }
 
     @property
@@ -130,6 +217,16 @@ class ControlSession:
         params = draw_episode_params(algo, self.rng)
         self.gen = make_generator(algo, self.M, rng=self.rng, **params)
         self.algo = algo
+        if self.evade:
+            # Re-key the radio: swap the evasion layer's base generator but keep its
+            # pressure / jammed-channel memory (the band is still being jammed). The
+            # manual switch is itself the re-key, so the evasion layer never auto-keys.
+            if self.emitter is None:
+                self.emitter = AdaptiveEvasionGenerator(
+                    self.gen, self.channels, config=evasion_config(self.evade_aggr), rng=self.rng)
+            else:
+                self.emitter.base = self.gen
+                self.gen.reset()
         regime = {"algo": algo, "start_hop": self.t + 1, "target": GENERATOR_TARGET_FAMILY[algo],
                   "secret": T.true_secret(self.gen)}
         self.regimes.append(regime)
@@ -152,25 +249,42 @@ class ControlSession:
         p = tr.predict_next()
         call = int(np.argmax(p)) if self.t > 0 else None
         top3 = [int(c) for c in np.argsort(p)[::-1][:3]] if self.t > 0 else []
-        c = int(self.gen.next_channel())
+        # In a closed-loop run the jammer's barrage for THIS hop was planned last hop
+        # (``self._pending_lit``); the transmitter is about to try to dodge it. Both
+        # sides decide from history only -- the transmitter never sees this plan.
+        cur_lit = list(self._pending_lit)
+        # The transmitter's channel. With evasion on it reacts to the PREVIOUS hop's
+        # jamming feedback; otherwise it is the plain open-loop generator.
+        if self.evade and self.emitter is not None:
+            c = int(self.emitter.next_channel(self.prev_fb))
+        else:
+            c = int(self.gen.next_channel())
+        denied = bool(cur_lit) and c in cur_lit
         obs = self.sensor.observe([c], self.channels, self.rng, start_slot=self.t)[0]
+        decoys: tuple[int, ...] = ()
+        if self.deceive and self.decoyer is not None:
+            obs, decoys = self.decoyer.corrupt(obs, self.rng)   # overlay coherent decoys
         st = tr.observe(obs)
         self.truth.append(c)
         idn = st.ident
         label = "unknown" if idn.label == "H0" else idn.label
         nxt = int(np.argmax(st.forecast))
+        kappa = tr.predictability()
         # Jam ranking: the most-likely next channels, best first. When the system
         # is unsure (low kappa) the UI lights several of these at once -- a
         # multi-tone / multiple-frequency jam, capped by the "max transmit freqs"
         # control; a confident forecast collapses it to the single top channel.
         jam = [int(c) for c in np.argsort(st.forecast)[::-1][:min(self.M, JAM_TONES_CAP)]]
+        # The barrage the jammer will light for the NEXT hop (what the transmitter
+        # will have to dodge). Carried into the next hop as ``cur_lit``.
+        next_lit = self._barrage(st.forecast, kappa) if self.closed_loop else []
         rec = {
             "hop": self.t + 1, "algo": self.algo, "switched": switched,
             "truth": c, "dets": sorted(int(d) for d in obs.detected_channels),
             "call": call, "call_p": _r(p[call], 3) if call is not None else None,
             "hit": (call == c) if call is not None else None,
             "top3_hit": (c in top3) if call is not None else None,
-            "next": nxt, "next_p": _r(st.forecast[nxt], 3), "kappa": _r(tr.predictability(), 3),
+            "next": nxt, "next_p": _r(st.forecast[nxt], 3), "kappa": _r(kappa, 3),
             "jam": jam,
             "id": {"label": label, "p": _r(idn.p), "locked": idn.locked,
                    "lock_hop": idn.lock_slot + 1 if idn.lock_slot is not None else None,
@@ -178,6 +292,23 @@ class ControlSession:
             "post": [_r(x, 3) for x in idn.posterior],
             "switch_detected": st.switch_detected, "p_switch": _r(st.p_switch, 3),
         }
+        if self.closed_loop:
+            rec["lit"] = cur_lit            # the barrage that targeted this hop
+            rec["next_lit"] = next_lit      # the barrage planned for the next hop
+            rec["denied"] = denied          # was the true channel in the barrage?
+            if self.deceive:
+                rec["decoys"] = sorted(set(int(d) for d in decoys))
+            if self.evade and self.emitter is not None:
+                rec["pressure"] = _r(self.emitter.pressure, 3)
+                rec["rekeys"] = int(self.emitter.rekeys)
+        # record the transmitter's own feedback for the NEXT hop, and the next plan
+        if self.evade and self.emitter is not None:
+            mask = np.zeros(self.M, dtype=bool)
+            if cur_lit:
+                mask[cur_lit] = True
+            self.prev_fb = JammingFeedback(slot=self.t, effect_on_self=1.0 if denied else 0.0,
+                                           denied=denied, jammed_mask=mask)
+        self._pending_lit = next_lit
         if switched:
             rec["regime"] = self.regimes[-1]
         if idn.locked and label != "unknown":
@@ -256,12 +387,19 @@ def main(argv=None):
     p.add_argument("--seed", type=int)
     p.add_argument("--plan", nargs="+", default=["lfsr:0", "weak_seed:80", "markov:160", "lagged_fib:240"],
                    help="algo:from_hop items, e.g. lfsr:0 markov:100")
+    p.add_argument("--evade", action="store_true", help="transmitter evades the jammer (reactive anti-jam)")
+    p.add_argument("--deceive", action="store_true", help="transmitter injects coherent decoys into the sensor")
+    p.add_argument("--decoy", default="lfsr", help="decoy family for --deceive")
+    p.add_argument("--n-decoys", type=int, default=1, help="number of coherent decoy streams")
+    p.add_argument("--max-tones", type=int, default=3, help="jammer's barrage budget (closed loop)")
     args = p.parse_args(argv)
     preset = next((s for s in SENSORS if s["id"] == args.sensor), {"p_d": 0.9, "p_fa": 0.01})
     p_d = args.p_d if args.p_d is not None else preset["p_d"]
     p_fa = args.p_fa if args.p_fa is not None else preset["p_fa"]
     t0 = time.time()
-    s = ControlSession(args.channels, args.hops, p_d, p_fa, seed=args.seed)
+    s = ControlSession(args.channels, args.hops, p_d, p_fa, seed=args.seed,
+                       evade=args.evade, deceive=args.deceive, decoy=args.decoy,
+                       n_decoys=args.n_decoys, max_tones=args.max_tones)
     rows = run_plan(s, _parse_plan(args.plan))
     print(f"[control] {args.channels} channels, {args.hops} hops, P_d={p_d} P_fa={p_fa}, "
           f"seed {s.seed} ({time.time() - t0:.1f}s)")
@@ -274,6 +412,15 @@ def main(argv=None):
               f"{lock:>7} {r['top1'] or 0:6.2f} {r['top1_last30'] or 0:8.2f}")
     hits = [r["hit"] for r in s.records if r["hit"] is not None]
     print(f"next-hop top-1 over the run: {np.mean(hits):.2f}  (random guessing: {1 / s.M:.2f})")
+    if s.closed_loop:
+        den = [r["denied"] for r in s.records if "denied" in r and r["hop"] > 1]
+        tag = []
+        if s.evade:
+            tag.append("evasion on")
+        if s.deceive:
+            tag.append(f"{s.n_decoys}× {s.decoy_family} decoys")
+        print(f"jammer denial (true channel in the barrage): {np.mean(den) if den else 0:.2f}  "
+              f"[{', '.join(tag)}]")
 
 
 if __name__ == "__main__":

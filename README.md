@@ -113,7 +113,7 @@ runs recorded by `python -m dashboard.build`:
 | --- | --- |
 | **Story** | the problem in three steps and the headline results |
 | **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
-| **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. When it is **not sure** of its top channel (below 90%) it calls a **barrage** of at least two channels together, up to a **"max transmit freqs"** you set in the panel (default 3); a sure call is one channel. The jammer lights exactly the barrage it calls, next-hop accuracy counts a hit when the true channel is in the barrage (the exact top-1 rate is shown alongside), and the hop chart draws each barrage. A **Run / Pause** button sits on the hop chart (Space works too). Channels, hops, sensor (including a perfect, 100%-accurate one), speed, the transmit-freq cap and chart overlays live in a settings side panel you can pop in and out |
+| **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. When it is **not sure** of its top channel (below 90%) it calls a **barrage** of at least two channels together, up to a **"max transmit freqs"** you set in the panel (default 3); a sure call is one channel. The jammer lights exactly the barrage it calls, next-hop accuracy counts a hit when the true channel is in the barrage (the exact top-1 rate is shown alongside), and the hop chart draws each barrage. A **red-team** panel lets the transmitter **fight back**: turn on **Evade** (the radio senses the barrage and hops off jammed channels, spreading out to crush the system's confidence) and/or **Deceive** (inject 1–3 coherent decoys of a chosen family into the sensor stream to mislead the ID and waste jam tones). With either on, the whole engagement becomes a real closed loop — both sides move from history only, and the accuracy banner reads out the **jammer denial** that evasion drives down; decoys are drawn as purple diamonds, and the system view shows the radio's evasion pressure and the decoys fed each hop. A **Run / Pause** button sits on the hop chart (Space works too). Channels, hops, sensor (including a perfect, 100%-accurate one), speed, the transmit-freq cap, the red-team options and chart overlays live in a settings side panel you can pop in and out |
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
@@ -339,6 +339,11 @@ for obs in stream:                       # observations only, as everywhere else
 # the same thing from the command line, with a scripted switch plan
 python -m dashboard.control --channels 16 --hops 300 --sensor perfect \
     --plan lfsr:0 weak_seed:80 markov:160 lagged_fib:240
+
+# red team: the transmitter evades the jammer and/or feeds it coherent decoys
+python -m dashboard.control --hops 150 --sensor perfect --plan lfsr:0 --evade
+python -m dashboard.control --hops 150 --sensor clear  --plan csprng:0 \
+    --deceive --decoy lfsr --n-decoys 3    # decoys drag the ID to a false LFSR break
 ```
 
 ### Findings (`exp18`, 6 random switch plans x 400 hops per sensor over all 13 algorithms, `M=16`)

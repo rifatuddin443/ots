@@ -114,6 +114,62 @@ def test_control_session_runs_a_switch_plan():
     assert len(rec["post"]) == len(s.labels)
 
 
+def test_control_session_closed_loop_record_shape():
+    """With evasion + deception on, records carry the closed-loop fields and stay
+    JSON-serialisable (what the server streams to the page)."""
+    from dashboard.control import ControlSession
+    s = ControlSession(16, 60, p_d=1.0, p_fa=0.0, seed=3, evade=True, deceive=True,
+                       n_decoys=2, max_tones=3)
+    info = s.info()
+    assert info["closed_loop"] and info["evade"] and info["deceive"] and info["n_decoys"] == 2
+    recs = s.step("lfsr", 40)
+    json.dumps({"info": info, "records": recs})
+    assert recs[0]["lit"] == [] and recs[0]["denied"] is False          # no jam on hop 1
+    r = recs[-1]
+    assert set(r) >= {"lit", "next_lit", "denied", "decoys", "pressure"}
+    assert all(0 <= c < 16 for c in r["lit"]) and len(r["lit"]) <= 3
+    assert all(0 <= c < 16 for c in r["decoys"])
+
+
+def test_control_session_open_loop_unchanged():
+    """No adversary -> no closed-loop fields on the records (back-compat)."""
+    from dashboard.control import ControlSession
+    s = ControlSession(16, 30, p_d=1.0, p_fa=0.0, seed=6)
+    assert not s.info()["closed_loop"]
+    r = s.step("lfsr", 20)[-1]
+    assert "lit" not in r and "denied" not in r
+
+
+def test_control_session_evasion_escapes_the_jammer():
+    """A fixed LFSR tape is almost perfectly predicted (so fully jammable); turning on
+    evasion collapses the prediction and lets most hops through the barrage."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 120, p_d=1.0, p_fa=0.0, seed=4)
+    base.step("lfsr", 120)
+    base_top1 = np.mean([r["hit"] for r in base.records if r["hit"] is not None])
+    assert base_top1 > 0.8
+    ev = ControlSession(16, 120, p_d=1.0, p_fa=0.0, seed=4, evade=True, max_tones=3)
+    ev.step("lfsr", 120)
+    ev_top1 = np.mean([r["hit"] for r in ev.records if r["hit"] is not None])
+    denial = np.mean([r["denied"] for r in ev.records if r["hop"] > 1])
+    assert ev_top1 < base_top1 - 0.3
+    assert denial < 0.5
+
+
+def test_control_session_deception_can_mislead_identification():
+    """A keyed CSPRNG is correctly 'unknown'; coherent LFSR decoys drag the ID to a
+    false algebraic break -- the active-adversary counterpart of the H_0 story."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 120, p_d=0.95, p_fa=0.01, seed=5)
+    base.step("csprng", 120)
+    assert base.records[-1]["id"]["label"] != "lfsr"
+    dec = ControlSession(16, 120, p_d=0.95, p_fa=0.01, seed=5, deceive=True,
+                         decoy="lfsr", n_decoys=3)
+    dec.step("csprng", 120)
+    assert dec.records[-1]["id"]["label"] == "lfsr"
+    assert any(r.get("decoys") for r in dec.records)
+
+
 def test_control_session_refuses_register_algorithms_off_power_of_two():
     from dashboard.control import ControlSession, algorithms_for
     avail = {a["id"]: a["available"] for a in algorithms_for(12)}
