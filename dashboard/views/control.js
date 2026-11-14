@@ -80,6 +80,9 @@
 .ctl-algo.on { border-color: rgba(34, 211, 238, 0.75); background: var(--accent-soft); box-shadow: 0 0 22px rgba(34, 211, 238, 0.14); }
 .ctl-algo.on small { color: var(--accent-ink); font-weight: 600; }
 .ctl-algo.on::after { content: ""; position: absolute; right: 9px; top: 10px; width: 8px; height: 8px; border-radius: 50%; background: #ff5d5d; box-shadow: 0 0 8px #ff5d5d; animation: blink 1.1s infinite; }
+.ctl-redteam { margin-top: 14px; padding: 11px 12px 13px; border: 1px solid rgba(192, 140, 240, 0.45); border-radius: 10px; background: rgba(192, 140, 240, 0.08); display: flex; flex-direction: column; gap: 4px; }
+.ctl-redteam > .ctl-group-l { color: #c9a4f2; margin-bottom: 4px; }
+.ctl-redteam .switch { font-size: 13px; }
 .ctl-transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--grid); }
 .ctl-transport .grow { flex: 1; }
 .ctl-run { white-space: nowrap; min-width: 116px; justify-content: center; }
@@ -863,23 +866,8 @@
       return { node: el("label", { class: "switch" }, inp, label), inp, key };
     };
     const toggles = [prefToggle("Reveal sensor mistakes (ghosts, missed hops)", "truth"), prefToggle("Show the true path", "path")];
-    // --- Adversary (red team): the transmitter fights back ---
-    const advToggle = (label, key) => {
-      const inp = el("input", { type: "checkbox" });
-      inp.addEventListener("change", () => { S.cfg[key] = inp.checked; refresh(); });
-      return { node: el("label", { class: "switch" }, inp, label), inp, key };
-    };
-    const evadeTog = advToggle("Evade the jammer (reactive anti-jam)", "evade");
-    const deceiveTog = advToggle("Deceive the sensor (inject decoys)", "deceive");
-    const decoySel = DECOY_FAMILIES.map((d) => [d.id, el("button", { class: "btn",
-      onclick: () => { S.cfg.decoy = d.id; refresh(); } }, d.name)]);
-    const nDecVal = el("span", { class: "num" });
-    const nDecInp = el("input", { type: "range", min: 1, max: MAX_DECOYS, step: 1, value: S.cfg.nDecoys, "aria-label": "Number of decoy streams" });
-    nDecInp.addEventListener("input", () => { S.cfg.nDecoys = +nDecInp.value; refresh(); });
-    const decoyBox = el("div", { class: "ctl-group", style: "margin-top:4px" },
-      el("div", { class: "ctl-group-l" }, "Decoy family"), el("div", { class: "seg" }, decoySel.map((x) => x[1])),
-      el("div", { class: "ctl-sliders ctl-jam", style: "margin-top:8px" }, el("label", {}, "Decoys", nDecInp, nDecVal)));
-    const advHelp = el("div", { class: "ctl-help" });
+    // The red-team controls (Evade / Deceive) live in the Transmitter card at the top
+    // of the panel (see makeTx), where the operator drives the radio -- not buried here.
     const sec = (label, ...kids) => el("div", { class: "ctl-psec" }, el("div", { class: "ctl-group-l" }, label), kids);
     panel.append(
       el("div", { class: "ctl-panel-h" }, el("h2", {}, "Settings"),
@@ -888,7 +876,6 @@
       sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
       sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
       sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
-      sec("Adversary · red team", evadeTog.node, deceiveTog.node, decoyBox, advHelp),
       sec("Barrage · max transmit freqs", jamBox, jamHelp),
       sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
       sec("Show on the chart", toggles.map((x) => x.node),
@@ -897,23 +884,6 @@
     return function update() {
       toggleSel(speeds, (v) => v === S.speed);
       for (const x of toggles) x.inp.checked = !!OTS.prefs[x.key];
-      // adversary controls
-      evadeTog.inp.checked = !!S.cfg.evade;
-      deceiveTog.inp.checked = !!S.cfg.deceive;
-      toggleSel(decoySel, (v) => v === S.cfg.decoy);
-      for (const [id, b] of decoySel) b.disabled = !(pow2(S.cfg.M) || id !== "lfsr");
-      decoyBox.hidden = !S.cfg.deceive;
-      if (document.activeElement !== nDecInp) nDecInp.value = S.cfg.nDecoys;
-      nDecVal.textContent = String(S.cfg.nDecoys);
-      const decoyName = (DECOY_FAMILIES.find((d) => d.id === S.cfg.decoy) || {}).name || S.cfg.decoy;
-      OTS.clear(advHelp).append(...(
-        !S.cfg.evade && !S.cfg.deceive
-          ? ["The transmitter ignores the jammer. Turn these on to let it ", el("b", {}, "fight back"), "."]
-          : [
-            ...(S.cfg.evade ? [el("b", {}, "Evasion: "), "the radio senses the barrage and hops off jammed channels, spreading out to crush the system's confidence. "] : []),
-            ...(S.cfg.deceive ? [el("b", {}, "Deception: "), el("b", {}, `${S.cfg.nDecoys}× ${decoyName}`), " decoy", S.cfg.nDecoys === 1 ? "" : "s", " laid into the sensor stream to mislead the ID and waste jam tones. "] : []),
-            el("span", { class: "muted" }, "Applies to the next session."),
-          ]));
       toggleSel(chM, (v) => v === S.cfg.M); toggleSel(chH, (v) => v === S.cfg.hops); toggleSel(sensors, (v) => v === S.cfg.sensor);
       if (document.activeElement !== inM) inM.value = S.cfg.M;
       if (document.activeElement !== inH) inH.value = S.cfg.hops;
@@ -961,6 +931,28 @@
           return b;
         }))));
     }
+    // --- Red team: let the transmitter fight back (session-level; starts a new run) ---
+    const advToggle = (label, key, title) => {
+      const inp = el("input", { type: "checkbox" });
+      inp.addEventListener("change", () => { S.cfg[key] = inp.checked; refresh(); });
+      return { node: el("label", { class: "switch", title }, inp, label), inp, key };
+    };
+    const evadeTog = advToggle("Evade the jammer", "evade",
+      "The radio senses the jammer's barrage and hops off jammed channels, spreading out to crush the system's confidence.");
+    const deceiveTog = advToggle("Deceive the sensor (decoys)", "deceive",
+      "Mix coherent fake detections into the sensor stream to mislead the identification and waste jam tones.");
+    const decoySel = DECOY_FAMILIES.map((d) => [d.id, el("button", { class: "btn",
+      onclick: () => { S.cfg.decoy = d.id; refresh(); } }, d.name)]);
+    const nDecVal = el("span", { class: "num" });
+    const nDecInp = el("input", { type: "range", min: 1, max: MAX_DECOYS, step: 1, value: S.cfg.nDecoys, "aria-label": "Number of decoy streams" });
+    nDecInp.addEventListener("input", () => { S.cfg.nDecoys = +nDecInp.value; refresh(); });
+    const decoyBox = el("div", { class: "ctl-group", style: "margin-top:6px" },
+      el("div", { class: "ctl-group-l" }, "Decoy family"), el("div", { class: "seg" }, decoySel.map((x) => x[1])),
+      el("div", { class: "ctl-sliders ctl-jam", style: "margin-top:8px" }, el("label", {}, "Decoys", nDecInp, nDecVal)));
+    const advHelp = el("div", { class: "ctl-help" });
+    card.append(el("div", { class: "ctl-redteam" },
+      el("div", { class: "ctl-group-l" }, "Red team · make the transmitter fight back"),
+      evadeTog.node, deceiveTog.node, decoyBox, advHelp));
     const playBtn = el("button", { class: "btn primary", onclick: toggleRun });
     const stepBtn = el("button", { class: "btn", onclick: stepOnce, title: "Advance one hop (→)" }, "›› 1 hop");
     const chip = el("button", { class: "chip ctl-chip", onclick: openPanel, title: "Open the settings panel (S)" });
@@ -979,6 +971,25 @@
       }
       syncRun(playBtn);
       stepBtn.disabled = !S.algo || done() || !OTS.live;
+      // red-team controls
+      evadeTog.inp.checked = !!S.cfg.evade;
+      deceiveTog.inp.checked = !!S.cfg.deceive;
+      toggleSel(decoySel, (v) => v === S.cfg.decoy);
+      for (const [id, b] of decoySel) b.disabled = !(pow2(S.cfg.M) || id !== "lfsr");
+      decoyBox.hidden = !S.cfg.deceive;
+      if (document.activeElement !== nDecInp) nDecInp.value = S.cfg.nDecoys;
+      nDecVal.textContent = String(S.cfg.nDecoys);
+      const decoyName = (DECOY_FAMILIES.find((d) => d.id === S.cfg.decoy) || {}).name || S.cfg.decoy;
+      const changedAdv = S.sess && cfgChanged() && (S.cfg.evade || S.cfg.deceive
+        || (S.sess.evade || S.sess.deceive));
+      OTS.clear(advHelp).append(...(
+        !S.cfg.evade && !S.cfg.deceive
+          ? ["The transmitter ignores the jammer. Turn these on to let it ", el("b", {}, "fight back"), "."]
+          : [
+            ...(S.cfg.evade ? [el("b", {}, "Evasion: "), "dodges the barrage, spreading its hops. "] : []),
+            ...(S.cfg.deceive ? [el("b", {}, "Deception: "), el("b", {}, `${S.cfg.nDecoys}× ${decoyName}`), " decoy", S.cfg.nDecoys === 1 ? "" : "s", " into the sensor stream. "] : []),
+            el("span", { class: changedAdv ? "ctl-soft" : "muted" }, changedAdv ? "Press an algorithm to start a session with this." : "Active."),
+          ]));
       const s = sensorOf(S.cfg), sp = SPEEDS.find((x) => x.v === S.speed);
       if (!inPanel) chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
       clockN.textContent = String(S.recs.length).padStart(3, "0");

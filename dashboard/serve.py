@@ -104,6 +104,14 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(HERE), **kwargs)
 
+    def end_headers(self) -> None:
+        # Don't let the browser cache the dashboard assets, so edits to the JS/CSS
+        # (e.g. the control room) show up on an ordinary refresh rather than serving a
+        # stale script. API responses already set no-store in _json().
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def _json(self, code: int, payload: dict) -> None:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
         self.send_response(code)
