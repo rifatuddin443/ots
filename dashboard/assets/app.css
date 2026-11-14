@@ -94,6 +94,14 @@ a { color: var(--accent-ink); }
 .nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: var(--muted); padding: 0 6px; }
 .side-foot code { font-family: var(--mono); color: var(--ink-2); font-size: 11.5px; }
+/* sidebar layout options: which side it docks on, and minimized to an icon rail (see the responsive block) */
+.side-ctl { display: flex; flex-direction: column; gap: 7px; }
+.side-ctl-l { font: 600 10.5px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.side-ctl-row { display: flex; align-items: center; gap: 6px; }
+.side-ctl .seg { flex-wrap: nowrap; }
+.side-ctl .seg .btn { padding: 5px 9px; font-size: 12px; }
+.side-ctl .btn.icon { width: 30px; padding: 5px 0; }
+.side-ctl .side-swap { display: none; }
 
 .main { min-width: 0; display: flex; flex-direction: column; }
 .topbar {
@@ -273,6 +281,31 @@ kbd { font: 600 10.5px var(--mono); border: 1px solid var(--line-2); border-bott
     box-shadow: -20px 0 50px rgba(0, 0, 0, 0.5);
   }
   .shell.has-drawer.drawer-open .drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, 0.45); }
+}
+/* Sidebar options, wide screens only (below 861px the sidebar is a top bar):
+   .side-right docks it on the right edge, .side-min shrinks it to an icon rail. */
+@media (min-width: 861px) {
+  .shell.side-right { grid-template-columns: minmax(0, 1fr) var(--side-w); }
+  .shell.side-right.has-drawer.drawer-open { grid-template-columns: minmax(0, 1fr) var(--drawer-w) var(--side-w); }
+  .shell.side-right .side { order: 2; border-right: 0; border-left: 1px solid var(--line); }
+  .shell.side-min { --side-w: 72px; }
+  .shell.side-min .side { padding: 16px 8px; gap: 14px; }
+  .shell.side-min .brand { justify-content: center; padding: 2px 0 4px; }
+  .shell.side-min .brand > div { display: none; }
+  .shell.side-min .nav a { position: relative; grid-template-columns: minmax(0, 1fr); justify-items: center; padding: 10px 0; }
+  .shell.side-min .nav a svg { grid-row: auto; }
+  .shell.side-min .nav a small { display: none; }
+  .shell.side-min .nav a b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .shell.side-min .side-foot { align-items: center; padding: 0; }
+  .shell.side-min .side-foot > :not(.side-ctl):not(.chip) { display: none; }
+  .shell.side-min .side-ctl-l, .shell.side-min .side-dock { display: none; }
+  .shell.side-min .side-ctl-row { flex-direction: column; }
+  .shell.side-min .side-ctl .side-swap { display: inline-flex; }
+  .shell.side-min #modeText { display: none; }
+  .shell.side-min .chip { padding: 6px; }
+}
+@media (min-width: 861px) and (max-width: 1280px) {
+  .shell.side-right.has-drawer.drawer-open { grid-template-columns: minmax(0, 1fr) var(--side-w); }
 }
 @media (max-width: 1100px) {
   .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }

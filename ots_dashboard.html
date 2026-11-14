@@ -104,6 +104,14 @@ a { color: var(--accent-ink); }
 .nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: var(--muted); padding: 0 6px; }
 .side-foot code { font-family: var(--mono); color: var(--ink-2); font-size: 11.5px; }
+/* sidebar layout options: which side it docks on, and minimized to an icon rail (see the responsive block) */
+.side-ctl { display: flex; flex-direction: column; gap: 7px; }
+.side-ctl-l { font: 600 10.5px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.side-ctl-row { display: flex; align-items: center; gap: 6px; }
+.side-ctl .seg { flex-wrap: nowrap; }
+.side-ctl .seg .btn { padding: 5px 9px; font-size: 12px; }
+.side-ctl .btn.icon { width: 30px; padding: 5px 0; }
+.side-ctl .side-swap { display: none; }
 
 .main { min-width: 0; display: flex; flex-direction: column; }
 .topbar {
@@ -284,6 +292,31 @@ kbd { font: 600 10.5px var(--mono); border: 1px solid var(--line-2); border-bott
   }
   .shell.has-drawer.drawer-open .drawer-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, 0.45); }
 }
+/* Sidebar options, wide screens only (below 861px the sidebar is a top bar):
+   .side-right docks it on the right edge, .side-min shrinks it to an icon rail. */
+@media (min-width: 861px) {
+  .shell.side-right { grid-template-columns: minmax(0, 1fr) var(--side-w); }
+  .shell.side-right.has-drawer.drawer-open { grid-template-columns: minmax(0, 1fr) var(--drawer-w) var(--side-w); }
+  .shell.side-right .side { order: 2; border-right: 0; border-left: 1px solid var(--line); }
+  .shell.side-min { --side-w: 72px; }
+  .shell.side-min .side { padding: 16px 8px; gap: 14px; }
+  .shell.side-min .brand { justify-content: center; padding: 2px 0 4px; }
+  .shell.side-min .brand > div { display: none; }
+  .shell.side-min .nav a { position: relative; grid-template-columns: minmax(0, 1fr); justify-items: center; padding: 10px 0; }
+  .shell.side-min .nav a svg { grid-row: auto; }
+  .shell.side-min .nav a small { display: none; }
+  .shell.side-min .nav a b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .shell.side-min .side-foot { align-items: center; padding: 0; }
+  .shell.side-min .side-foot > :not(.side-ctl):not(.chip) { display: none; }
+  .shell.side-min .side-ctl-l, .shell.side-min .side-dock { display: none; }
+  .shell.side-min .side-ctl-row { flex-direction: column; }
+  .shell.side-min .side-ctl .side-swap { display: inline-flex; }
+  .shell.side-min #modeText { display: none; }
+  .shell.side-min .chip { padding: 6px; }
+}
+@media (min-width: 861px) and (max-width: 1280px) {
+  .shell.side-right.has-drawer.drawer-open { grid-template-columns: minmax(0, 1fr) var(--side-w); }
+}
 @media (max-width: 1100px) {
   .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -329,9 +362,20 @@ kbd { font: 600 10.5px var(--mono); border: 1px solid var(--line-2); border-bott
     </a>
     <div class="nav" id="nav"></div>
     <div class="side-foot">
+      <div class="side-ctl" role="group" aria-label="Sidebar layout">
+        <span class="side-ctl-l">Sidebar</span>
+        <div class="side-ctl-row">
+          <div class="seg side-dock" role="group" aria-label="Sidebar side">
+            <button class="btn" id="sideLeftBtn" type="button" title="Keep the sidebar on the left">◧ Left</button>
+            <button class="btn" id="sideRightBtn" type="button" title="Put the sidebar on the right">Right ◨</button>
+          </div>
+          <button class="btn icon" id="sideMinBtn" type="button"></button>
+          <button class="btn icon side-swap" id="sideSwapBtn" type="button">⇄</button>
+        </div>
+      </div>
       <span class="chip" id="modeChip" title="Replay: recorded real runs. Live: new runs computed by the Python bank."><span class="dot"></span><span id="modeText">Replay</span></span>
       <span id="dataStamp"></span>
-      <span>Shortcuts: <kbd>1</kbd>…<kbd>8</kbd> pages<br><kbd>Space</kbd> play · <kbd>G</kbd> guided demo<br><kbd>S</kbd> settings · <kbd>F</kbd> full screen</span>
+      <span>Shortcuts: <kbd>1</kbd>…<kbd>8</kbd> pages<br><kbd>Space</kbd> play · <kbd>G</kbd> guided demo<br><kbd>S</kbd> settings · <kbd>F</kbd> full screen<br><kbd>M</kbd> minimize sidebar</span>
     </div>
   </nav>
 
@@ -1100,6 +1144,38 @@ window.OTS = (function () {
     inp.addEventListener("change", () => OTS.setPref(key, inp.checked));
     return OTS.el("label", { class: "switch" }, inp, label);
   }
+  // ======================================================= sidebar layout
+  // Two options for the page menu on wide screens: dock it on the left or the right
+  // edge, and minimize it to an icon rail (page names stay in the tooltips).
+  const SIDE_KEY = "ots.sidebar.v1";
+  const side = { min: false, right: false };
+  try { Object.assign(side, JSON.parse(localStorage.getItem(SIDE_KEY) || "{}")); } catch (_) { /* storage unavailable */ }
+  function applySidebar() {
+    const shell = OTS.$(".shell");
+    shell.classList.toggle("side-min", !!side.min);
+    shell.classList.toggle("side-right", !!side.right);
+    const minBtn = OTS.$("#sideMinBtn"), swap = OTS.$("#sideSwapBtn");
+    const inward = side.right ? "»" : "«", outward = side.right ? "«" : "»";   // arrows point the way it folds
+    minBtn.textContent = side.min ? outward : inward;
+    minBtn.title = (side.min ? "Expand the sidebar" : "Minimize the sidebar") + " (M)";
+    minBtn.setAttribute("aria-label", side.min ? "Expand the sidebar" : "Minimize the sidebar");
+    minBtn.setAttribute("aria-expanded", side.min ? "false" : "true");
+    swap.title = side.right ? "Move the sidebar to the left" : "Move the sidebar to the right";
+    swap.setAttribute("aria-label", swap.title);
+    for (const [id, on] of [["#sideLeftBtn", !side.right], ["#sideRightBtn", !!side.right]]) {
+      const b = OTS.$(id); b.classList.toggle("sel", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+  /** Change the sidebar layout: patch = { min?: bool, right?: bool }. Saved per browser. */
+  OTS.setSidebar = (patch) => {
+    Object.assign(side, patch);
+    try { localStorage.setItem(SIDE_KEY, JSON.stringify(side)); } catch (_) { /* ignore */ }
+    applySidebar();
+    // the page area changed width: charts that size themselves on resize redraw
+    requestAnimationFrame(() => { OTS.emit("resize"); window.dispatchEvent(new Event("resize")); });
+  };
+  OTS.sidebar = () => ({ ...side });
+
   OTS.renderDrawer = renderDrawer;
   OTS.openDrawer = (open) => {
     const s = OTS.$(".shell"); s.classList.toggle("drawer-open", open == null ? !s.classList.contains("drawer-open") : open);
@@ -1114,6 +1190,7 @@ window.OTS = (function () {
     if (n >= 1 && n <= VIEWS.length) { OTS.views.go(VIEWS[n - 1].id); return; }
     if (k === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); return; }
     if (k === "g") { tour.active ? tour.stop() : tour.start(); return; }
+    if (k === "m") { OTS.setSidebar({ min: !side.min }); return; }
     if (!v || !v.usesPlayer) return;
     if (k === " ") { e.preventDefault(); P.toggle(); }
     else if (k === "arrowright") { tour.stop(); P.pause(); P.step(1); }
@@ -1134,6 +1211,11 @@ window.OTS = (function () {
     OTS.$("#settingsBtn").addEventListener("click", () => OTS.openDrawer());
     OTS.$("#drawerClose").addEventListener("click", () => OTS.openDrawer(false));
     OTS.$(".drawer-backdrop").addEventListener("click", () => OTS.openDrawer(false));
+    OTS.$("#sideMinBtn").addEventListener("click", () => OTS.setSidebar({ min: !side.min }));
+    OTS.$("#sideSwapBtn").addEventListener("click", () => OTS.setSidebar({ right: !side.right }));
+    OTS.$("#sideLeftBtn").addEventListener("click", () => OTS.setSidebar({ right: false }));
+    OTS.$("#sideRightBtn").addEventListener("click", () => OTS.setSidebar({ right: true }));
+    applySidebar();
     for (const e of ["tick", "state", "load"]) OTS.on(e, renderTransport);
     OTS.on("load", renderDrawer);
     document.addEventListener("keydown", onKey);
@@ -2632,6 +2714,7 @@ window.OTS = (function () {
   font: 700 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; box-shadow: -6px 0 20px rgba(0, 0, 0, 0.35);
 }
 .ctl-tab:hover { background: var(--raise); }
+@media (min-width: 861px) { .side-right .ctl-tab { right: var(--side-w); } }   /* clear of a right-docked page menu */
 .ctl-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ctl-backdrop { display: none; }
 .ctl-chip { cursor: pointer; text-transform: none; letter-spacing: 0.02em; font-weight: 600; }
@@ -2993,7 +3076,7 @@ window.OTS = (function () {
     const ih = Math.round(clamp(220 + iw * 0.18, 240, 400)), rowH = ih / M, H = m.t + ih + m.b;
     const first = end - N + 1;                       // hop number shown in column 0
     const cx = (col) => m.l + (col + 0.5) * colW, cy = (ch) => m.t + ih - (ch + 0.5) * rowH;
-    const truthOn = !!OTS.prefs.truth, pathOn = !!OTS.prefs.path;
+    const truthOn = !!OTS.prefs.truth, pathOn = !!OTS.prefs.path, hideCaught = !!OTS.prefs.hideCaughtExtras;
     const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
       "aria-label": t ? `Hop chart, hops ${Math.max(1, first)} to ${end}: sensor detections, the system's calls and the next-hop call.` : "Hop chart: waiting for the first hop." });
     const yStep = Math.max(1, Math.ceil(13 / rowH));
@@ -3052,10 +3135,13 @@ window.OTS = (function () {
       const bar = callFor(h);   // the barrage called for this hop (empty for hop 1)
       if (bar.length) {
         const caught = bar.includes(r.truth);
-        bar.slice(1).forEach((ch) => g.append(barBar(ch, x0, 0.55)));
+        // the extra channels, one amber bar each. With "hide on caught hops" on, a caught
+        // hop drops them, except the one extra channel that made the catch (if any)
+        const extras = hideCaught && caught ? bar.slice(1).filter((ch) => ch === r.truth) : bar.slice(1);
+        extras.forEach((ch) => g.append(barBar(ch, x0, 0.55)));
         g.append(svg("circle", { cx: x, cy: cy(bar[0]), r: ringR, fill: "none", stroke: caught ? acc : bad, "stroke-width": 2, opacity: caught ? 1 : 0.85 }));
         if (caught) seen.hit = true; else seen.miss = true;
-        if (bar.length > 1) seen.jam = true;
+        if (extras.length) seen.jam = true;
       }
       if (truthOn && !r.dets.includes(r.truth)) {
         g.append(svg("circle", { cx: x, cy: cy(r.truth), r: dotR + 2, fill: "none", stroke: "rgba(200, 215, 235, 0.8)", "stroke-width": 1.3, "stroke-dasharray": "2 2" }));
@@ -3394,6 +3480,8 @@ window.OTS = (function () {
       return { node: el("label", { class: "switch" }, inp, label), inp, key };
     };
     const toggles = [prefToggle("Reveal sensor mistakes (ghosts, missed hops)", "truth"), prefToggle("Show the true path", "path")];
+    const hideExtras = prefToggle("Hide extra barrage channels on hops the call caught", "hideCaughtExtras");
+    const hideHelp = el("div", { class: "ctl-help" }, "Clears the amber boxes where the prediction was right. If an extra channel made the catch, only that one stays. Misses and the NEXT call keep the full barrage.");
     const sec = (label, ...kids) => el("div", { class: "ctl-psec" }, el("div", { class: "ctl-group-l" }, label), kids);
     panel.append(
       el("div", { class: "ctl-panel-h" }, el("h2", {}, "Settings"),
@@ -3402,14 +3490,14 @@ window.OTS = (function () {
       sec("Hops", el("div", { class: "ctl-field" }, el("div", { class: "row", style: "gap:8px" }, el("div", { class: "seg" }, chH.map((x) => x[1])), inH))),
       sec("Sensor", el("div", { class: "seg" }, sensors.map((x) => x[1])), sliders, help),
       sec("Session", el("div", { class: "ctl-actions", style: "margin-top:0" }, startBtn), el("div", { class: "ctl-help" }, status)),
-      sec("Barrage · max transmit freqs", jamBox, jamHelp),
+      sec("Barrage · max transmit freqs", jamBox, jamHelp, el("div", { style: "margin-top:10px" }, hideExtras.node), hideHelp),
       sec("Speed", el("div", { class: "seg" }, speeds.map((x) => x[1]))),
       sec("Show on the chart", toggles.map((x) => x.node),
         el("div", { class: "ctl-help" }, "The system never sees these: they are drawn for you.")));
     let helpKey = "", btnKey = "";
     return function update() {
       toggleSel(speeds, (v) => v === S.speed);
-      for (const x of toggles) x.inp.checked = !!OTS.prefs[x.key];
+      for (const x of [...toggles, hideExtras]) x.inp.checked = !!OTS.prefs[x.key];
       toggleSel(chM, (v) => v === S.cfg.M); toggleSel(chH, (v) => v === S.cfg.hops); toggleSel(sensors, (v) => v === S.cfg.sensor);
       if (document.activeElement !== inM) inM.value = S.cfg.M;
       if (document.activeElement !== inH) inH.value = S.cfg.hops;
@@ -6022,6 +6110,7 @@ window.OTS = (function () {
         row([`1–${nViews}`], "Switch page (in the order of the side menu)"),
         row(["G"], "Start or stop the guided demo"),
         row(["F"], "Full screen"),
+        row(["M"], "Minimize or expand the side menu"),
         grp(playerPages.length ? `On the ${playerPages.join(" and ")} pages` : "On player pages"),
         row(["Space"], "Play or pause"),
         row(["←", "→"], "Step one hop back or forward"),
