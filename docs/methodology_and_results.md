@@ -1071,8 +1071,11 @@ codebase; the OTS defences evaluated here are those already built (knapsack /
 conformal / reactive allocation and `H_0`), not the emitter-ID sorting that would
 blunt coherent decoys; and, as everywhere, results are simulation-only.
 
-The same two-sided engagement is playable by hand in the dashboard's **Control room**,
-where a **"Did it work?"** scoreboard makes the result legible without any EW background:
+The same two-sided engagement is playable by hand in the dashboard's **Control room**.
+Evasion and deception are levers of the running engagement there, not of the session:
+they can be switched on, changed and switched off at any hop, the radio carries on from
+where its hop sequence stands, and the banner reports the jammer's denial separately for
+the hops the radio ignored it and the hops it fought back. A **"Did it work?"** scoreboard makes the result legible without any EW background:
 it runs the identical radio against the identical jammer twice — passive, then with the
 chosen countermeasures (a `jammer_live` baseline paired with a red-team run on the same
 seed) — and reports the two outcomes side by side, *how often the jammer denied the true

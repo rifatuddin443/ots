@@ -203,6 +203,112 @@ def test_control_session_deception_can_mislead_identification():
     assert any(r.get("decoys") for r in dec.records)
 
 
+def test_control_session_evasion_can_be_switched_on_and_off_mid_run():
+    """The red-team levers belong to the hop, not the session. Evasion armed in the middle
+    of a run takes effect on the next hop: the jammer that was landing nearly every hop
+    starts missing, the past is untouched, and dropping the lever lets the jammer back in."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 160, p_d=1.0, p_fa=0.0, seed=21)
+    base.step("lfsr", 160)
+    s = ControlSession(16, 160, p_d=1.0, p_fa=0.0, seed=21)
+    quiet = s.step("lfsr", 60)
+    assert not s.info()["closed_loop"] and all("denied" not in r for r in quiet)   # open loop so far
+    on = s.step("lfsr", 50, evade=True)
+    assert s.truth[:60] == base.truth[:60]                    # nothing before the toggle moved
+    assert on[0]["hop"] == 61 and on[0]["redteam"]["evade"] and on[0]["evade"]
+    assert "redteam" not in on[1]                             # stamped once, on the hop it changed
+    assert set(on[0]) >= {"lit", "next_lit", "denied", "pressure"}
+    assert np.mean([r["denied"] for r in on]) < 0.5           # the radio slips the barrage
+    off = s.step("lfsr", 50, evade=False)
+    assert off[0]["redteam"]["evade"] is False and "pressure" not in off[0]
+    assert "denied" in off[-1]                                # still scored: the loop stays closed
+    assert np.mean([r["denied"] for r in off[10:]]) > 0.8     # passive again -> jammed again
+    json.dumps(s.records)
+
+
+def test_control_session_mid_run_evasion_does_not_rewind_the_radio():
+    """Arming evasion wraps the generator where it stands. Against a keyed CSPRNG the jammer
+    can only guess, so the evading radio still spends much of its time on its own tape; a
+    radio rewound to its seed would agree with the tape only by chance (1 in 16)."""
+    from dashboard.control import ControlSession
+    base = ControlSession(16, 80, p_d=1.0, p_fa=0.0, seed=8)
+    base.step("csprng", 80)
+    s = ControlSession(16, 80, p_d=1.0, p_fa=0.0, seed=8)
+    s.step("csprng", 20)
+    s.step("csprng", 60, evade=True)
+    assert s.truth[:20] == base.truth[:20]
+    on_tape = np.mean([a == b for a, b in zip(s.truth[20:], base.truth[20:])])
+    assert on_tape > 0.25
+
+
+def test_control_session_first_live_barrage_is_the_one_the_page_drew():
+    """In an open-loop run the page draws the next barrage itself, from the record's rounded
+    ``next_p`` / ``kappa`` and its own budget control. When the loop closes mid-run, the
+    barrage that goes live for the next hop must be exactly that one."""
+    import math
+    from dashboard.control import SURE_P, ControlSession
+
+    def page_barrage(r, max_tones, m):                         # views/control.js: litTones
+        cap = max(1, min(max_tones, m, 8))
+        if cap < 2 or r["next_p"] >= SURE_P:
+            n = 1
+        else:
+            k = min(1.0, max(0.0, r["kappa"]))
+            n = max(2, min(cap, math.floor(1 + (cap - 1) * (1 - k) + 0.5)))
+        return r["jam"][:n]
+
+    for algo, seed in (("markov", 7), ("logistic", 3), ("lfsr", 4), ("csprng", 9)):
+        s = ControlSession(16, 60, p_d=0.9, p_fa=0.02, seed=seed)
+        last = s.step(algo, 30, max_tones=3)[-1]
+        # the budget was raised after the last hop was played: the page re-drew, so must we
+        first = s.step(algo, 1, evade=True, max_tones=5)[0]
+        assert first["lit"] == page_barrage(last, 5, 16)
+
+
+def test_control_session_deception_can_be_switched_and_changed_mid_run():
+    """Decoys can start, change and stop inside one engagement, and each change is stamped
+    on the hop it took effect so the page can log it."""
+    from dashboard.control import ControlSession
+    s = ControlSession(16, 160, p_d=0.95, p_fa=0.01, seed=5)
+    quiet = s.step("csprng", 50)
+    assert quiet[-1]["id"]["label"] != "lfsr" and "decoys" not in quiet[-1]
+    lfsr = s.step("csprng", 60, deceive=True, decoy="lfsr", n_decoys=3)
+    assert lfsr[-1]["id"]["label"] == "lfsr"                  # the decoys drag the ID to a false break
+    assert any(r["decoys"] for r in lfsr)
+    lcg = s.step("csprng", 10, deceive=True, decoy="lcg", n_decoys=2)
+    done = s.step("csprng", 40, deceive=False)
+    assert "decoys" not in done[-1] and done[-1]["deceive"] is False
+    stamps = [(r["hop"], r["redteam"]["deceive"], r["redteam"]["decoy"], r["redteam"]["n_decoys"])
+              for r in s.records if "redteam" in r]
+    assert stamps == [(51, True, "lfsr", 3), (111, True, "lcg", 2), (121, False, "lcg", 2)]
+    assert lcg[0]["redteam"]["decoy"] == "lcg"
+    # an LFSR decoy on a non-power-of-two band falls back to Markov and is not re-drawn every step
+    t = ControlSession(12, 40, seed=2)
+    t.step("lcg", 5, deceive=True, decoy="lfsr")
+    first = t.decoyer
+    t.step("lcg", 5, deceive=True, decoy="lfsr")
+    assert t.decoyer is first and t.redteam_state()["decoy"] == "markov"
+
+
+def test_control_step_endpoint_takes_the_levers():
+    """The page sends the levers with every step; leaving them out keeps the session's."""
+    from dashboard import serve
+    q = lambda **kw: {k: [str(v)] for k, v in kw.items()}      # noqa: E731 - a parsed query string
+    sid = serve.control_new(q(channels=16, hops=60))["session"]
+    a = serve.control_step(q(session=sid, algo="lfsr", n=20))
+    assert a["redteam"]["evade"] is False and "denied" not in a["records"][-1]
+    b = serve.control_step(q(session=sid, algo="lfsr", n=20, evade=1, deceive=1, decoy="lcg",
+                             n_decoys=2, max_tones=4))
+    assert b["redteam"] == {"closed_loop": True, "evade": True, "deceive": True, "decoy": "lcg",
+                            "n_decoys": 2, "max_tones": 4}
+    assert b["records"][0]["redteam"]["evade"] and "denied" in b["records"][0]
+    c = serve.control_step(q(session=sid, algo="lfsr", n=5))
+    assert c["redteam"]["evade"] and "redteam" not in c["records"][0]
+    d = serve.control_step(q(session=sid, algo="lfsr", n=5, evade=0, deceive=0))
+    assert d["redteam"]["evade"] is False and d["records"][0]["redteam"]["deceive"] is False
+    json.dumps(d)
+
+
 def test_control_session_refuses_register_algorithms_off_power_of_two():
     from dashboard.control import ControlSession, algorithms_for
     avail = {a["id"]: a["available"] for a in algorithms_for(12)}

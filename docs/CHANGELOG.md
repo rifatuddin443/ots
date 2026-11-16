@@ -11,6 +11,47 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-16 — Control room: evade / deceive can be toggled mid-engagement
+
+Until now the red-team levers were fixed when a session was created, so ticking
+**Evade the jammer** or **Deceive the sensor** in the middle of a run did nothing until
+the next session. They are now levers of the running engagement: the change rides on the
+very next hop, and they can be switched off again the same way.
+
+- `dashboard/control.py` — `ControlSession.set_redteam(evade, deceive, decoy, n_decoys,
+  max_tones)` changes the countermeasures between two hops, and `step()` takes the same
+  keywords. Evasion armed mid-run wraps the generator **where it stands** (no rewind to
+  its seed) and reacts to the hop that just went by; decoy streams start, are re-drawn on
+  a family / count change, and stop. The jammer's barrage is now planned on every hop
+  (open loop too, where only the page draws it), so the loop can close at any hop with
+  the jammer already in step; `_barrage` evaluates the page's rule on the record's own
+  3-decimal numbers, so the barrage previewed in the NEXT column is exactly the one that
+  goes live. The first hop a countermeasure is on, the engagement becomes a closed loop
+  and stays one (`lit` / `next_lit` / `denied` from then on, so the hops after the radio
+  stands down are still scored). Records gain `evade` / `deceive` (the levers on for that
+  hop) and a `redteam` stamp on the hop they changed. A session created with the flags,
+  or with none, produces the same records as before apart from those new keys.
+- `fhew/evasion.py` — `AdaptiveEvasionGenerator(reset_base=False)` and
+  `reset(base=False)` arm or clear the evasion layer without restarting the hop pattern.
+- `dashboard/serve.py` — `/api/control/step` takes `evade`, `deceive`, `decoy`,
+  `n_decoys`, `max_tones` (left out = keep the session's) and returns the levers in force.
+- `dashboard/views/control.js` — every step carries the levers as they are, and toggling
+  them no longer asks for a new session. The lever help says *Active*, *Takes effect on
+  the next hop* (paused run) or *Starts with the radio*. A mid-run flip is marked on the
+  hop chart (*evade on*, *decoys off*, …), shaded violet on the whole-session timeline
+  and written to the event log; the banner switches to **jammer denial** and, once both
+  kinds of hop exist, splits it into *while ignoring the jammer* vs *while fighting back*.
+  Once the loop is closed a change of the "max transmit freqs" budget applies from the
+  next hop rather than re-drawing the hops already played.
+- Tests: 5 new in `tests/test_tracker.py` (evasion on / off mid-run; no rewind; the first
+  live barrage is the one the page drew; deception on / changed / off; the step endpoint).
+  Full suite 206 → 211. `ots_dashboard.html` rebuilt with `--reuse`.
+
+Observed (M=16, perfect sensor, LFSR, evade switched on at hop 61 and off at hop 111):
+jammed ≈ 100 % while passive, ≈ 24 % while evading, ≈ 100 % again after standing down.
+
+---
+
 ## 2026-11-14 — "Did it work?" effectiveness scoreboard (Control room)
 
 Makes the red-team payoff self-evident to any viewer: a one-click **head-to-head** that

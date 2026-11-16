@@ -13,7 +13,9 @@ The Control room page drives a transmitter interactively (``dashboard.control``)
 ``GET /api/control/new`` (``channels``, ``hops``, ``p_d``, ``p_fa``, ``seed``)
 opens a session and ``GET /api/control/step`` (``session``, ``algo``, ``n``)
 advances it ``n`` hops with the transmitter on ``algo``, switching it when the
-algorithm changed.
+algorithm changed. Both take the red-team levers (``evade``, ``deceive``, ``decoy``,
+``n_decoys``) and the jammer's budget (``max_tones``); on ``step`` they apply from the
+next hop, so the transmitter can start or stop fighting back in the middle of a run.
 """
 
 from __future__ import annotations
@@ -71,6 +73,13 @@ def _flag(query: dict, key: str) -> bool:
     return _arg(query, key, "0").lower() in ("1", "true", "yes", "on")
 
 
+def _opt(query: dict, key: str, cast):
+    """An optional parameter: ``None`` when the request leaves it out (keep the session's)."""
+    if key not in query:
+        return None
+    return _flag(query, key) if cast is bool else cast(query[key][0])
+
+
 def control_new(query: dict) -> dict:
     session = CR.ControlSession(
         n_channels=int(_arg(query, "channels", "16")), hops=int(_arg(query, "hops", "300")),
@@ -93,8 +102,13 @@ def control_step(query: dict) -> dict:
     _SESSIONS.move_to_end(sid)
     session = _SESSIONS[sid]
     n = max(1, min(25, int(_arg(query, "n", "1"))))
-    records = session.step(_arg(query, "algo", "lfsr"), n)
-    return {"session": sid, "t": session.t, "done": session.done, "records": records}
+    records = session.step(
+        _arg(query, "algo", "lfsr"), n,
+        evade=_opt(query, "evade", bool), deceive=_opt(query, "deceive", bool),
+        decoy=_opt(query, "decoy", str), n_decoys=_opt(query, "n_decoys", int),
+        max_tones=_opt(query, "max_tones", int))
+    return {"session": sid, "t": session.t, "done": session.done, "records": records,
+            "redteam": session.redteam_state()}
 
 
 _API = {"/api/run": run_request, "/api/control/new": control_new, "/api/control/step": control_step}

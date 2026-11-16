@@ -2769,6 +2769,8 @@ window.OTS = (function () {
 .ctl-acc-v { font: 700 21px/1 var(--sans); color: var(--ink); }
 .ctl-acc-v b { font-family: var(--mono); }
 .ctl-acc-s { font-size: 12.5px; color: var(--ink-2); }
+.ctl-acc-ph { flex-basis: 100%; }
+.ctl-acc-ph b { color: var(--ink); font-family: var(--mono); }
 .ctl-acc-bar { flex: 1 1 160px; min-width: 120px; position: relative; height: 12px; border-radius: 6px; background: #16233a; }
 .ctl-acc-bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--accent); transition: width 0.3s ease; }
 .ctl-acc-bar > em { position: absolute; top: -3px; bottom: -3px; width: 2px; background: rgba(232, 238, 247, 0.75); }
@@ -2781,6 +2783,7 @@ window.OTS = (function () {
 .ctl-hop .band-l, .ctl-tl .band-l { fill: var(--muted); font: 600 9.5px var(--mono); letter-spacing: 0.08em; }
 .ctl-hop .mk-tx { fill: var(--ink); font: 700 10.5px var(--mono); }
 .ctl-hop .mk-det { fill: var(--accent-ink); font: 700 10.5px var(--mono); }
+.ctl-hop .mk-rt, .ctl-tl .mk-rt { fill: #c9a4f2; font: 700 10.5px var(--mono); }
 .ctl-hop .nx-t { fill: var(--accent-ink); font: 700 10px var(--mono); letter-spacing: 0.12em; }
 .ctl-hop .empty-t, .ctl-tl .empty-t { fill: var(--muted); font: 13px var(--sans); }
 .ctl-tl .row-l { fill: var(--ink-2); font: 600 11.5px var(--sans); }
@@ -2915,7 +2918,7 @@ window.OTS = (function () {
   // Module level, so a session survives switching to another page and back.
   const S = {
     cfg: { M: 16, hops: 300, sensor: "perfect", custom: { p_d: 0.9, p_fa: 0.01 },
-      // red-team transmitter options (session-level: changing them starts a new session)
+      // red-team transmitter levers: live, sent with every hop, so they can be flipped mid-run
       evade: false, deceive: false, decoy: "lfsr", nDecoys: 1 },
     sess: null,         // api/control/new response
     recs: [],           // one record per hop (api/control/step)
@@ -2941,8 +2944,10 @@ window.OTS = (function () {
     return window.innerWidth > 1100;
   })();
   // Max transmit frequencies the jammer may light at once (the "multiple transmit
-  // frequency" control). Display-only: changing it re-renders from the recorded
-  // forecast ranking, never re-runs the engagement.
+  // frequency" control). Display-only while the transmitter ignores the jammer: changing
+  // it re-renders from the recorded forecast ranking, never re-runs the engagement. Once
+  // the transmitter has fought back the server owns the barrage, and a change applies
+  // from the next hop on.
   const MAXTONES_KEY = "ots.control.maxtones";
   let maxTones = (() => {
     try { const v = localStorage.getItem(MAXTONES_KEY); if (v != null) return clamp(Math.round(+v) || 3, 1, JAM_CAP_MAX); } catch (_) { /* storage unavailable */ }
@@ -2960,25 +2965,60 @@ window.OTS = (function () {
 
   const sensorOf = (cfg) => (cfg.sensor === "custom" ? { id: "custom", name: "Custom", ...cfg.custom } : SENSORS().find((s) => s.id === cfg.sensor));
   const done = () => !!(S.sess && S.recs.length >= S.sess.hops);
-  /** Do the chosen settings differ from the running session's? */
+  /** Do the chosen settings differ from the running session's? The red-team levers and
+   *  the barrage budget are not session settings: they ride on every hop (see advance). */
   function cfgChanged() {
     if (!S.sess) return true;
     const s = sensorOf(S.cfg);
-    if (S.sess.channels !== S.cfg.M || S.sess.hops !== S.cfg.hops
-      || Math.abs(S.sess.p_d - s.p_d) > 1e-9 || Math.abs(S.sess.p_fa - s.p_fa) > 1e-9) return true;
-    // red-team options are baked into the session, so changing any of them needs a new one
-    if (!!S.sess.evade !== !!S.cfg.evade || !!S.sess.deceive !== !!S.cfg.deceive) return true;
-    if (S.cfg.deceive && (S.sess.decoy !== S.cfg.decoy || S.sess.n_decoys !== S.cfg.nDecoys)) return true;
-    // the jammer's barrage budget is part of the loop once the adversary is engaged
-    // (use the session's own cap here, not jamCap(), which would call back into us)
-    if (S.cfg.evade || S.cfg.deceive) {
-      const cap = S.sess.jam_cap || JAM_CAP_MAX;
-      if (S.sess.max_tones !== clamp(maxTones, 1, cap)) return true;
-    }
-    return false;
+    return S.sess.channels !== S.cfg.M || S.sess.hops !== S.cfg.hops
+      || Math.abs(S.sess.p_d - s.p_d) > 1e-9 || Math.abs(S.sess.p_fa - s.p_fa) > 1e-9;
   }
-  /** Is the running session a genuine closed loop (transmitter fights back)? */
-  function closedLoop() { return !!(S.sess && !cfgChanged() && (S.sess.evade || S.sess.deceive)); }
+  /** Has the transmitter fought back at some point of this run? From that hop on the
+   *  server owns the barrage and scores every hop as jammed / got through. */
+  function loopLive() { const r = S.recs[S.recs.length - 1]; return !!r && r.denied != null; }
+  /** Was the transmitter fighting back (evading, or planting decoys) on hop record r? */
+  const fighting = (r) => !!(r && (r.evade || r.deceive));
+  /** The decoy family the server lays down for a chosen one (an LFSR needs 2^n channels). */
+  const decoyFor = (id, M) => (id === "lfsr" && !pow2(M) ? "markov" : id);
+  const decoyWords = (id, n) => `${n}× ${OTS.emitName(id)} decoy${n === 1 ? "" : "s"}`;
+  const RT_COL = "#c08cf0";   // red-team colour: lever changes, decoys
+  /** The red-team levers and the barrage budget, as the next hop will carry them. */
+  function redteamQuery() {
+    return `&evade=${S.cfg.evade ? 1 : 0}&deceive=${S.cfg.deceive ? 1 : 0}`
+      + `&decoy=${encodeURIComponent(S.cfg.decoy)}&n_decoys=${S.cfg.nDecoys}&max_tones=${Math.min(maxTones, jamCap())}`;
+  }
+  /** Levers the operator has set that the last hop did not run with: they take effect on
+   *  the next hop (a paused run, or the moment between two hops). */
+  function leversPending() {
+    const r = S.recs[S.recs.length - 1];
+    if (!r || !S.sess || done()) return false;
+    if (!!r.evade !== !!S.cfg.evade || !!r.deceive !== !!S.cfg.deceive) return true;
+    return !!S.cfg.deceive && (S.sess.decoy !== decoyFor(S.cfg.decoy, S.sess.channels) || S.sess.n_decoys !== S.cfg.nDecoys);
+  }
+  /** The hops where the levers changed, in order: [{hop, now, short, words}]. `short`
+   *  labels the chart marker, `words` finish the sentence "Transmitter ...". */
+  function leverChanges() {
+    const out = [];
+    let was = { evade: false, deceive: false, decoy: null, n_decoys: 0 };
+    for (const r of S.recs) {
+      if (!r.redteam) continue;
+      const now = r.redteam, short = [], words = [];
+      if (now.evade !== was.evade) {
+        short.push(now.evade ? "evade on" : "evade off");
+        words.push(now.evade ? "started evading the jammer" : "stopped evading the jammer");
+      }
+      if (now.deceive !== was.deceive) {
+        short.push(now.deceive ? "decoys on" : "decoys off");
+        words.push(now.deceive ? `started deceiving the sensor with ${decoyWords(now.decoy, now.n_decoys)}` : "stopped deceiving the sensor");
+      } else if (now.deceive && (now.decoy !== was.decoy || now.n_decoys !== was.n_decoys)) {
+        short.push("decoys changed");
+        words.push(`changed its decoys to ${decoyWords(now.decoy, now.n_decoys)}`);
+      }
+      if (short.length) out.push({ hop: r.hop, now, short: short.join(" · "), words: words.join(" and ") });
+      was = now;
+    }
+    return out;
+  }
   function algoAvailable(id) {
     const M = S.sess && !cfgChanged() ? S.sess.channels : S.cfg.M;
     return pow2(M) || !NEEDS_POW2.has(id);
@@ -2997,9 +3037,7 @@ window.OTS = (function () {
     const s = sensorOf(S.cfg);
     S.creating = true; S.error = null; refresh();
     try {
-      const adv = `&evade=${S.cfg.evade ? 1 : 0}&deceive=${S.cfg.deceive ? 1 : 0}`
-        + `&decoy=${encodeURIComponent(S.cfg.decoy)}&n_decoys=${S.cfg.nDecoys}&max_tones=${Math.min(maxTones, jamCap())}`;
-      S.sess = await api(`api/control/new?channels=${S.cfg.M}&hops=${S.cfg.hops}&p_d=${s.p_d}&p_fa=${s.p_fa}${adv}`);
+      S.sess = await api(`api/control/new?channels=${S.cfg.M}&hops=${S.cfg.hops}&p_d=${s.p_d}&p_fa=${s.p_fa}${redteamQuery()}`);
       S.sess.sensorName = s.id === "perfect" ? "perfect" : s.name.toLowerCase();
       S.recs = []; S.algo = null; viewEnd = null;
       return true;
@@ -3014,8 +3052,11 @@ window.OTS = (function () {
     if (!S.sess || !S.algo || S.busy || done()) return;
     S.busy = true; S.error = null;
     try {
-      const j = await api(`api/control/step?session=${S.sess.session}&algo=${encodeURIComponent(S.algo)}&n=${n}`);
+      // every step carries the levers as they are now, so flipping one mid-run takes
+      // effect on the very next hop instead of waiting for a new session
+      const j = await api(`api/control/step?session=${S.sess.session}&algo=${encodeURIComponent(S.algo)}&n=${n}${redteamQuery()}`);
       S.recs.push(...j.records);
+      if (j.redteam) Object.assign(S.sess, j.redteam);   // the levers the server now holds
       if (j.done) pause();
     } catch (err) {
       S.error = err.message; pause();
@@ -3085,9 +3126,9 @@ window.OTS = (function () {
     return clamp(tonesFor(r.kappa, cap), 2, cap);
   }
   /** The barrage for the hop after record r: the top-n of its forecast ranking. The
-   *  jammer lights exactly these channels, and they are the system's call. In a
-   *  closed-loop run (evasion / deception) the backend owns the barrage so the
-   *  transmitter can actually dodge it -- use its plan verbatim. */
+   *  jammer lights exactly these channels, and they are the system's call. From the
+   *  hop the transmitter first fights back (evasion / deception) the backend owns the
+   *  barrage so the transmitter can actually dodge it -- use its plan verbatim. */
   function litTones(r) {
     if (!r) return [];
     if (r.next_lit) return r.next_lit;            // backend's plan for the next hop (closed loop)
@@ -3175,7 +3216,7 @@ window.OTS = (function () {
     root.append(svg("text", { class: "nx-t", x: nx + colW / 2, y: m.t - 22, "text-anchor": "middle" }, "NEXT"));
     const ringR = Math.max(4.5, Math.min(colW, rowH) * 0.42), dotR = clamp(Math.min(colW, rowH) * 0.2, 1.8, 3.8);
     const acc = OTS.tok("accent"), bad = OTS.tok("serious"), det = OTS.tok("det"), jamCol = OTS.tok("warning");
-    const decoyCol = "#c08cf0";   // planted decoy detections (deception), distinct from ghosts
+    const decoyCol = RT_COL;      // planted decoy detections (deception), distinct from ghosts
     // a barrage: the top channel carries the ring, the extra channels an amber bar each
     const barBar = (ch, x0, opacity) => svg("rect", { x: x0 + colW * 0.18, y: cy(ch) - rowH * 0.3, width: colW * 0.64, height: Math.max(3, rowH * 0.6), rx: 2, fill: jamCol, opacity });
     let nextLit = [];
@@ -3252,6 +3293,14 @@ window.OTS = (function () {
         g.append(svg("text", { class: "mk-det", x: x - 3, y: 25, "text-anchor": "end" }, "switch detected"));
       }
     }
+    // markers: the hops where you flipped a red-team lever (evade / decoys) mid-run
+    for (const c of leverChanges()) {
+      if (c.hop < 2 || c.hop < lo || c.hop > end) continue;
+      const x = m.l + (c.hop - first) * colW;
+      g.append(svg("line", { x1: x, x2: x, y1: yId - 2, y2: yTx + 11, stroke: RT_COL, "stroke-width": 1.6, "stroke-dasharray": "4 3" }));
+      // shares the top row with the "TX → ..." label; drops a row if you switched on the same hop
+      g.append(svg("text", { class: "mk-rt", x: x + 3, y: recs[c.hop - 1].switched ? 25 : 12 }, c.short));
+    }
     if (!t) root.append(svg("text", { class: "empty-t", x: m.l + (N * colW) / 2, y: m.t + ih / 2, "text-anchor": "middle" },
       OTS.live ? "Press an algorithm to put the radio on air" : "Start the live server to drive the radio"));
     OTS.clear(box).append(root);
@@ -3294,6 +3343,8 @@ window.OTS = (function () {
     }
     rows.push({ value: idName(r.id.label), label: `system thinks · ${sure(r.id.p)}${r.id.locked ? " · locked" : ""}`, color: familyColor(r.id.label), kind: "square" });
     if (r.switch_detected) rows.push({ value: "⚑", label: `switch detected · started hop ${r.id.start_hop}` });
+    const lever = r.redteam ? leverChanges().find((c) => c.hop === r.hop) : null;
+    if (lever) rows.push({ value: "⚑", label: `transmitter ${lever.words}`, color: RT_COL, kind: "square" });
     return { title: `Hop ${r.hop}`, rows };
   }
   function hopLegend(box, seen) {
@@ -3367,6 +3418,18 @@ window.OTS = (function () {
         root.append(svg("path", { d: `M${x - 5} ${yId - 7}L${x + 5} ${yId - 7}L${x} ${yId - 1}Z`, fill: OTS.tok("accent") }));
       }
     });
+    // hops where the transmitter was fighting back (evading / planting decoys): a violet
+    // wash under the accuracy line, so the before / after of a mid-run toggle is plain
+    let f0 = -1;
+    for (let i = 0; i <= t; i++) {
+      const on = i < t && fighting(recs[i]);
+      if (on && f0 < 0) f0 = i;
+      if (on || f0 < 0) continue;
+      const x = xh(f0 + 1), w = (i - f0) * wh;
+      root.append(svg("rect", { x, y: yAcc, width: Math.max(1, w), height: accH, fill: "rgba(192, 140, 240, 0.14)" }));
+      if (w > 86) root.append(svg("text", { class: "mk-rt", x: x + 4, y: yAcc - 4 }, "fighting back"));
+      f0 = -1;
+    }
     // rolling accuracy
     let d = "", area = "", started = false;
     const pts = [];
@@ -3398,6 +3461,8 @@ window.OTS = (function () {
         { value: algoName(r.algo), label: "transmitter", color: algoColor(r.algo), kind: "square" },
         { value: idName(r.id.label), label: `system · ${sure(r.id.p)}${r.id.locked ? " · locked" : ""}`, color: familyColor(r.id.label), kind: "square" },
         { value: st.n ? pct(st.rate) : "—", label: `next-hop hits, last ${ROLL}` },
+        ...(fighting(r) ? [{ value: [r.evade ? "evading" : null, r.deceive ? "decoys" : null].filter(Boolean).join(" + "),
+          label: "transmitter fighting back", color: RT_COL, kind: "square" }] : []),
       ] });
     });
     hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); OTS.tip.hide(); });
@@ -3459,18 +3524,19 @@ window.OTS = (function () {
         el("div", { class: "ctl-tones" }, lit.map((c, i) => el("span", { class: "ctl-tone" + (i === 0 ? " lead" : "") }, fmt.ch(c)))),
       ]]);
     }
-    if (closedLoop()) {
-      if (S.sess.evade) {
+    if (r.denied != null) {                 // the transmitter has fought back in this run
+      if (r.evade) {
         const pr = r.pressure != null ? r.pressure : 0;
         kv.push(["Evasion", [el("b", {}, "dodging the barrage"), " · pressure ", el("b", {}, pct(pr)),
           pr > 0.45 ? el("span", { class: "ctl-soft" }, " · spreading hops (killing κ)") : ""]]);
       }
-      if (S.sess.deceive) {
+      if (r.deceive) {
         const dn = r.decoys ? r.decoys.length : 0;
         kv.push(["Deception", [el("b", {}, `${S.sess.n_decoys}× ${OTS.emitName(S.sess.decoy)}`), " decoys",
           el("span", { class: "muted" }, ` · ${dn} fed this hop`)]]);
       }
-      if (r.denied != null) kv.push(["This hop", r.denied
+      if (!fighting(r)) kv.push(["Red team", el("span", { class: "muted" }, "standing down · the transmitter is ignoring the jammer")]);
+      kv.push(["This hop", r.denied
         ? el("span", { class: "ctl-no" }, "✗ jammed")
         : el("span", { class: "ctl-ok" }, "✓ got through the barrage")]);
     }
@@ -3492,10 +3558,12 @@ window.OTS = (function () {
   // ============================================================ event log
   function events() {
     const out = [];
+    const levers = new Map(leverChanges().map((c) => [c.hop, c]));
     let prev = null;
     for (const r of S.recs) {
       if (r.switched) out.push({ hop: r.hop, color: algoColor(r.algo), parts: [r.hop === 1 ? "Radio on air: " : "You switched the radio to ",
         el("b", {}, algoName(r.algo)), r.regime && r.regime.secret ? ` (${r.regime.secret})` : ""] });
+      if (levers.has(r.hop)) out.push({ hop: r.hop, color: RT_COL, parts: ["Transmitter ", el("b", {}, levers.get(r.hop).words)] });
       if (r.switch_detected) {
         const real = [...S.recs.slice(0, r.hop)].reverse().find((x) => x.switched);
         const lag = real ? r.hop - real.hop : null;
@@ -3508,11 +3576,6 @@ window.OTS = (function () {
           parts: ["System locked: ", el("b", {}, idName(r.id.label)), ` (${sure(r.id.p)})`, v === "ok" ? " ✓" : v === "soft" ? " ≈" : " ✗"] });
       }
       prev = r;
-    }
-    if (closedLoop() && S.recs.length) {
-      const bits = [S.sess.evade ? "evading the jammer" : null,
-        S.sess.deceive ? `${S.sess.n_decoys}× ${OTS.emitName(S.sess.decoy)} decoys` : null].filter(Boolean);
-      out.push({ hop: 1, color: "#c08cf0", parts: ["Red-team transmitter: ", el("b", {}, bits.join(" + "))] });
     }
     if (done()) out.push({ hop: S.recs.length, color: OTS.tok("muted"), parts: ["Session finished: ", el("b", {}, `${hits().h} of ${hits().n}`), " hops caught by the barrage"] });
     return out.reverse();
@@ -3620,7 +3683,8 @@ window.OTS = (function () {
         ? ["When the system is unsure of its top channel (under ", el("b", {}, `${Math.round(SURE_P * 100)}%`),
           ") it calls a barrage of ", el("b", {}, `2 to ${mt}`), " channels together; a sure call is one channel."]
         : ["The system calls one channel at a time."]),
-        ` Capped at ${cap} for ${S.cfg.M} channels.`);
+        ` Capped at ${cap} for ${S.cfg.M} channels.`,
+        loopLive() ? " The transmitter has fought back in this run, so the barrage is now part of the engagement: a change here applies from the next hop, not to the hops already played." : "");
       const s = sensorOf(S.cfg), ghosts = s.p_fa * (S.cfg.M - 1);
       const hk = [s.p_d, s.p_fa, S.cfg.M].join("|");
       if (hk !== helpKey) {
@@ -3655,7 +3719,7 @@ window.OTS = (function () {
           return b;
         }))));
     }
-    // --- Red team: let the transmitter fight back (session-level; starts a new run) ---
+    // --- Red team: let the transmitter fight back (live: flip them at any hop of a run) ---
     const advToggle = (label, key, title) => {
       const inp = el("input", { type: "checkbox" });
       inp.addEventListener("change", () => { S.cfg[key] = inp.checked; refresh(); });
@@ -3704,15 +3768,19 @@ window.OTS = (function () {
       if (document.activeElement !== nDecInp) nDecInp.value = S.cfg.nDecoys;
       nDecVal.textContent = String(S.cfg.nDecoys);
       const decoyName = (DECOY_FAMILIES.find((d) => d.id === S.cfg.decoy) || {}).name || S.cfg.decoy;
-      const changedAdv = S.sess && cfgChanged() && (S.cfg.evade || S.cfg.deceive
-        || (S.sess.evade || S.sess.deceive));
+      // the levers are live: a change made mid-run rides on the next hop
+      const onAir = S.recs.length > 0 && !done(), pending = leversPending();
+      const when = !onAir ? "Starts with the radio: press an algorithm."
+        : pending ? (S.playing ? "Takes effect on the next hop." : "Takes effect on the next hop: resume or step the run.")
+        : "Active.";
       OTS.clear(advHelp).append(...(
         !S.cfg.evade && !S.cfg.deceive
-          ? ["The transmitter ignores the jammer. Turn these on to let it ", el("b", {}, "fight back"), "."]
+          ? [pending ? el("span", { class: "ctl-soft" }, S.playing ? "Standing down on the next hop. " : "Stands down on the next hop: resume or step the run. ") : "",
+            "The transmitter ignores the jammer. Turn these on at any time, mid-run included, to let it ", el("b", {}, "fight back"), "."]
           : [
             ...(S.cfg.evade ? [el("b", {}, "Evasion: "), "dodges the barrage, spreading its hops. "] : []),
             ...(S.cfg.deceive ? [el("b", {}, "Deception: "), el("b", {}, `${S.cfg.nDecoys}× ${decoyName}`), " decoy", S.cfg.nDecoys === 1 ? "" : "s", " into the sensor stream. "] : []),
-            el("span", { class: changedAdv ? "ctl-soft" : "muted" }, changedAdv ? "Press an algorithm to start a session with this." : "Active."),
+            el("span", { class: pending || !onAir ? "ctl-soft" : "muted" }, when),
           ]));
       const s = sensorOf(S.cfg), sp = SPEEDS.find((x) => x.v === S.speed);
       if (!inPanel) chip.textContent = `⚙ ${S.cfg.M} channels · ${S.cfg.hops} hops · ${s.id === "perfect" ? "perfect" : s.name.toLowerCase()} sensor · ${sp ? sp.label : ""}`;
@@ -3726,20 +3794,29 @@ window.OTS = (function () {
     const all = hits(), top = top1(), lastSw = [...S.recs].reverse().find((r) => r.switched);
     const since = lastSw ? hits(lastSw.hop - 1) : { n: 0, h: 0, rate: null };
     const chance = barrageChance(), avg = meanBarrage();
-    const loop = closedLoop();
-    // In a closed loop a barrage hit = the true channel was jammed, so this IS the
-    // jammer's denial rate; the transmitter's job (evasion / deception) is to push it down.
-    const advBits = loop ? [S.sess.evade ? "evasion" : null, S.sess.deceive ? `${S.sess.n_decoys}× ${S.sess.decoy} decoys` : null].filter(Boolean) : [];
+    const loop = loopLive(), last = S.recs[S.recs.length - 1];
+    // Once the transmitter has fought back a barrage hit = the true channel was jammed, so this
+    // IS the jammer's denial rate; the transmitter's job (evasion / deception) is to push it down.
+    const advBits = fighting(last) ? [last.evade ? "evasion" : null, last.deceive ? decoyWords(S.sess.decoy, S.sess.n_decoys) : null].filter(Boolean) : [];
+    // A run where the levers were flipped has two kinds of hop: the radio ignoring the jammer,
+    // and the radio fighting back. Their denial rates side by side are the before / after.
+    const ph = { off: { n: 0, h: 0 }, on: { n: 0, h: 0 } };
+    if (loop) S.recs.forEach((r, i) => { const x = barrageHit(i); if (x == null) return; const k = fighting(r) ? ph.on : ph.off; k.n++; if (x) k.h++; });
     OTS.clear(box).append(
       el("span", { class: "ctl-acc-l" }, loop ? "Jammer denial" : "Next-hop barrage"),
       el("span", { class: "ctl-acc-v" }, all.n ? [el("b", {}, `${all.h} of ${all.n}`), loop ? " jammed · " : " hit · ", pct(all.rate)] : "no calls yet"),
       el("span", { class: "ctl-acc-s" }, all.n ? `exact top-1: ${top.h} of ${top.n} (${pct(top.rate)}) · barrage avg ${avg.toFixed(1)} channels` : ""),
-      loop && advBits.length
-        ? el("span", { class: "ctl-acc-s", style: "color:var(--accent-ink);font-weight:600" }, `transmitter fighting back · ${advBits.join(" + ")}`)
+      loop
+        ? el("span", { class: "ctl-acc-s", style: "color:var(--accent-ink);font-weight:600" },
+          advBits.length ? `transmitter fighting back · ${advBits.join(" + ")}` : "transmitter ignoring the jammer")
         : el("span", { class: "ctl-acc-s" }, lastSw && lastSw.hop > 1 && since.n ? `since your last switch: ${since.h} of ${since.n} (${pct(since.rate)})` : ""),
       el("div", { class: "ctl-acc-bar", title: `random guessing of a barrage this size: ${pct(chance)}` },
         el("i", { style: `width:${((all.rate || 0) * 100).toFixed(1)}%` }), el("em", { style: `left:${(chance * 100).toFixed(2)}%` })),
-      el("span", { class: "ctl-acc-s" }, `random guessing: ${pct(chance)}`));
+      el("span", { class: "ctl-acc-s" }, `random guessing: ${pct(chance)}`),
+      ph.off.n && ph.on.n
+        ? el("span", { class: "ctl-acc-s ctl-acc-ph" }, "While ignoring the jammer: ", el("b", {}, pct(ph.off.h / ph.off.n)),
+          ` jammed (${ph.off.h} of ${ph.off.n} hops). While fighting back: `, el("b", {}, pct(ph.on.h / ph.on.n)), ` jammed (${ph.on.h} of ${ph.on.n} hops).`)
+        : "");
   }
 
   // ===================================================== effectiveness A/B
@@ -3951,7 +4028,7 @@ window.OTS = (function () {
       const tlCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {},
         el("p", { class: "card-t" }, "The whole session"),
         el("p", { class: "card-k" }, "Truth vs belief: every switch, how fast it was caught"),
-        el("p", { class: "card-d" }, "Dashed lines are your switches; cyan triangles are the moments the system detected one."))), tlBox);
+        el("p", { class: "card-d" }, "Dashed lines are your switches; cyan triangles are the moments the system detected one. Violet shading marks the hops where the transmitter was fighting back."))), tlBox);
       const sys = el("div", { class: "card" });
       const logBox = el("div", { class: "ctl-log", "aria-live": "polite" });
       const logCard = el("div", { class: "card" }, el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Event log"))), logBox);

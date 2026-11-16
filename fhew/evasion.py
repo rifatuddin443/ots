@@ -134,12 +134,16 @@ class AdaptiveEvasionGenerator:
         but a weaker move). :meth:`from_family` wires this up automatically.
     rng:
         Randomness for evasive sampling and phase jumps (seeded for reproducibility).
+    reset_base:
+        ``False`` wraps ``base`` as it stands instead of rewinding it to its seed, so
+        evasion can be switched on in the middle of an engagement.
     """
 
     def __init__(self, base: Generator, channels: ChannelSet, *,
                  config: EvasionConfig | None = None,
                  rekey_factory: Callable[[], Generator] | None = None,
-                 rng: np.random.Generator | None = None):
+                 rng: np.random.Generator | None = None,
+                 reset_base: bool = True):
         self.base = base
         self.channels = channels
         self.M = channels.size
@@ -151,7 +155,7 @@ class AdaptiveEvasionGenerator:
             raise ValueError("channel set has no effective channels to hop on")
         self._eff_mask = np.zeros(self.M, dtype=bool)
         self._eff_mask[self._eff] = True
-        self.reset()
+        self.reset(base=reset_base)
 
     # ------------------------------------------------------------------ factories
     @classmethod
@@ -174,8 +178,15 @@ class AdaptiveEvasionGenerator:
         return cls(factory(), channels, config=config, rekey_factory=factory, rng=rng)
 
     # ------------------------------------------------------------------ lifecycle
-    def reset(self) -> None:
-        self.base.reset()
+    def reset(self, *, base: bool = True) -> None:
+        """Clear the evasion memory (pressure, hot-channel map, counters).
+
+        ``base=False`` leaves the hop generator where it is. That is how evasion is
+        armed on a radio that is already mid-sequence: it starts reacting to jamming
+        without first jumping back to the start of its hop pattern.
+        """
+        if base:
+            self.base.reset()
         self.h = np.zeros(self.M, dtype=np.float64)   # decaying jammed-channel memory
         self.pressure = 0.0
         self.rekeys = 0
