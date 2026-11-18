@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OTS · Hop Identification</title>
+<title>OTS · Control room</title>
 <meta name="description" content="Demo of the OTS sensor-aware hypothesis bank identifying and predicting frequency-hopping radios from a noisy passive sensor.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,7 +13,7 @@
 <body>
 <div class="shell">
   <nav class="side" aria-label="Pages">
-    <a class="brand" href="#/story">
+    <a class="brand" href="#/control">
       <svg class="radar" viewBox="0 0 40 40" aria-hidden="true">
         <defs><linearGradient id="sw" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#22d3ee" stop-opacity="0"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0.7"/></linearGradient></defs>
         <circle cx="20" cy="20" r="18.5" fill="#06121b" stroke="#22d3ee" stroke-opacity="0.6"/>
@@ -37,45 +37,24 @@
           <button class="btn icon side-swap" id="sideSwapBtn" type="button">⇄</button>
         </div>
       </div>
-      <span class="chip" id="modeChip" title="Replay: recorded real runs. Live: new runs computed by the Python bank."><span class="dot"></span><span id="modeText">Replay</span></span>
+      <span class="chip" id="modeChip" title="The Control room computes every hop through the Python engine (python -m dashboard.serve). Proof and How it works use recorded runs and work offline."><span class="dot"></span><span id="modeText">Offline</span></span>
       <span id="dataStamp"></span>
-      <span>Shortcuts: <kbd>1</kbd>…<kbd>8</kbd> pages<br><kbd>Space</kbd> play · <kbd>G</kbd> guided demo<br><kbd>S</kbd> settings · <kbd>F</kbd> full screen<br><kbd>M</kbd> minimize sidebar</span>
+      <span class="side-keys">Shortcuts<br><kbd>1</kbd>–<kbd>3</kbd> pages · <kbd>F</kbd> full screen<br><kbd>M</kbd> minimize sidebar<br><kbd>Space</kbd> run · <kbd>→</kbd> one hop<br><kbd>S</kbd> settings · <kbd>T</kbd> mistakes</span>
     </div>
   </nav>
 
   <div class="main">
     <header class="topbar">
       <div><h1 id="vTitle">OTS</h1><div class="sub" id="vSub"></div></div>
-      <div class="grow"></div>
-      <div class="transport" id="transport" hidden>
-        <span class="chip scen-chip" id="scenChip"></span>
-        <button class="btn icon" id="restartBtn" title="Restart (R)" aria-label="Restart">⟲</button>
-        <button class="btn icon" id="backBtn" title="Step back (←)" aria-label="Step back">‹‹</button>
-        <button class="btn primary" id="playBtn" title="Play / pause (Space)">▶ Play</button>
-        <button class="btn icon" id="fwdBtn" title="Step forward (→)" aria-label="Step forward">››</button>
-        <span class="hopclock" id="hopClock"></span>
-      </div>
-      <button class="btn" id="settingsBtn" title="Scenario and display settings (S)" hidden>⚙ Settings</button>
     </header>
     <section class="view" id="view"></section>
   </div>
-
-  <aside class="drawer" aria-label="Settings">
-    <div class="drawer-head"><h2>Settings</h2><button class="btn icon" id="drawerClose" aria-label="Close settings">✕</button></div>
-    <div id="drawerBody"></div>
-  </aside>
-  <div class="drawer-backdrop"></div>
 </div>
 
 <script src="data.js"></script>
 <script src="assets/core.js"></script>
-<script src="views/story.js"></script>
-<script src="views/live.js"></script>
 <script src="views/control.js"></script>
-<script src="views/analysis.js"></script>
-<script src="views/challenge.js"></script>
 <script src="views/proof.js"></script>
-<script src="views/adaptive.js"></script>
 <script src="views/how.js"></script>
 <script>OTS.boot();</script>
 </body>

@@ -1334,7 +1334,7 @@
   OTS.views.register({
     id: "control", nav: "Control room", title: "Control room", hint: "Drive the transmitter yourself",
     subtitle: "Switch the radio's algorithm mid-test: the system must notice, re-identify and keep predicting",
-    icon: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6", usesPlayer: false,
+    icon: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
     mount(root) {
       injectCss();
       const note = el("div");

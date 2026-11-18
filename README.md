@@ -105,40 +105,31 @@ figures in `results/figures/*.png`, and a consolidated `results/summary.json`.
 
 ## Demo dashboard
 
-A presentation-ready, multi-page dashboard that shows the bank working, aimed at a
-non-technical audience. Every number on it comes from real `fhew.HypothesisBank`
-runs recorded by `python -m dashboard.build`:
+A presentation-ready dashboard built around the **Control room**, aimed at a
+non-technical audience. Three pages: the Control room computes every hop live
+through `python -m dashboard.serve`; Proof and How it works read real
+`fhew.HypothesisBank` runs recorded by `python -m dashboard.build` and open offline:
 
 | Page | What it shows |
 | --- | --- |
-| **Story** | the problem in three steps and the headline results |
-| **Live demo** | one engagement hop by hop: a labelled hop chart (detections, OTS's next-hop call before each hop arrives), the race between the hypotheses, the lock and the recovered secret next to the true one |
 | **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. When it is **not sure** of its top channel (below 90%) it calls a **barrage** of at least two channels together, up to a **"max transmit freqs"** you set in the panel (default 3); a sure call is one channel. The jammer lights exactly the barrage it calls, next-hop accuracy counts a hit when the true channel is in the barrage (the exact top-1 rate is shown alongside), and the hop chart draws each barrage. A **red-team** panel lets the transmitter **fight back**: turn on **Evade** (the radio senses the barrage and hops off jammed channels, spreading out to crush the system's confidence) and/or **Deceive** (inject 1–3 coherent decoys of a chosen family into the sensor stream to mislead the ID and waste jam tones). Both levers are **live**: flip them before the run or at any hop of it (a paused run picks the change up on its next hop), and switch them off again whenever you like — the radio carries on from where its hop sequence stands. From the first hop the transmitter fights back, the engagement is a real closed loop — both sides move from history only, and the accuracy banner reads out the **jammer denial** that evasion drives down, split into the hops the radio **ignored** the jammer and the hops it **fought back** once you have toggled mid-run; the hop chart marks each flip (*evade on*, *decoys off*, …), the whole-session timeline shades the fighting-back hops violet, and the event log records them; decoys are drawn as purple diamonds, and the system view shows the radio's evasion pressure and the decoys fed each hop. A **"Did it work?"** scoreboard above the chart makes the payoff obvious to anyone: one click runs the **same** radio against the **same** jammer twice — once ignoring it, once fighting back — and reports the difference in plain words and bars (*how often the jammer jammed your signal* and *whether it could identify your radio*, e.g. "cut the jammer's hits by 93% and stopped it from identifying your radio"). A **Run / Pause** button sits on the hop chart (Space works too). Channels, hops, sensor (including a perfect, 100%-accurate one), speed, the transmit-freq cap, the red-team options and chart overlays live in a settings side panel you can pop in and out; a switch there hides the amber extra-barrage boxes on hops the call caught (keeping only the extra channel that made the catch, if any) |
-| **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
-| **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
 | **How it works** | the method in plain words: sense, score, decide, predict; the expert bank; the two safety rules |
 
 ```bash
-python -m dashboard.build      # record engagements, scoreboard and proofs -> dashboard/data.js (~2 min)
-# then open dashboard/index.html in a browser: replays offline, no server or external scripts
-python -m dashboard.serve      # http://127.0.0.1:8050 : same pages, plus new engagements run live
-                               #   and the Control room at http://127.0.0.1:8050/#/control
+python -m dashboard.serve      # http://127.0.0.1:8050 : opens on the Control room, every hop run live
+python -m dashboard.build      # re-record the scoreboard, proofs and example runs -> dashboard/data.js
+# dashboard/index.html also opens offline: Proof and How it works need no server or external scripts
 python -m dashboard.build --reuse --standalone ots_demo.html   # one self-contained file to share
 ```
 
 `dashboard/data.js` is committed, so the pages open straight from a fresh clone.
-Scenario, sensor quality, recorded run, display toggles and speed live in the
-settings drawer of the Live and Analysis pages. Press **G** for the guided demo
-(LFSR, weak seed under a contested sensor, Hénon chaos, filtered LFSR, then the
-CSPRNG control where the bank answers "unknown" and the standard test names a
-generator anyway). The page menu can be docked on the left or the right and
-minimized to an icon rail (buttons at the bottom of the menu, or `M`); the choice
-is remembered per browser. Keys: `1`–`8` pages, `Space` play, `←`/`→` step, `R` restart,
-`N` next run, `T` sensor mistakes, `S` settings, `F` full screen, `M` minimize the menu. In the Control
-room: `Space` run/pause, `→` one hop, `S` settings panel, `T` sensor mistakes.
+The page menu can be docked on the left or the right and minimized to an icon rail
+(buttons at the bottom of the menu, or `M`); the choice is remembered per browser.
+Keys: `1`–`3` pages, `F` full screen, `M` minimize the menu; in the Control room
+`Space` run/pause, `→` one hop, `S` settings panel, `T` sensor mistakes.
 
-The dashboard replays the exact episodes `experiments.common.episode_for` draws
+The dashboard build replays the exact episodes `experiments.common.episode_for` draws
 for each seed (checked in the tests), runs the one-expert-per-family
 identification bank of exp12/exp13 at MSPRT `δ = 0.05`, and keeps the bank on
 observations only; the truth overlays and secrets are read from the generator

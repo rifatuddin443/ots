@@ -164,7 +164,7 @@
   OTS.views.register({
     id: "proof", nav: "Proof", title: "Proof at scale", hint: "Hundreds of runs, side by side",
     subtitle: "Seven claims, each checked on hundreds of real runs, with every run counted",
-    icon: "M4 20V10m6 10V4m6 16v-7m4 7H2", usesPlayer: false,
+    icon: "M4 20V10m6 10V4m6 16v-7m4 7H2",
     mount(root) {
       injectCss();
       const handles = [], offs = [];

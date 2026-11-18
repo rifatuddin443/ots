@@ -11,6 +11,40 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-18 — Dashboard trimmed to the Control room, Proof and How it works
+
+The page menu had eight entries, and most of them repeated what the Control room
+already does live. It now has three, with the Control room first (and the home page):
+
+| Kept | Why |
+| --- | --- |
+| **Control room** | the main page: drive the transmitter, switch algorithms, jam, fight back |
+| **Proof** | results over hundreds of recorded runs, which a single live session cannot show |
+| **How it works** | the method in plain words, for an audience new to it |
+
+Removed: **Story**, **Live demo**, **Decision analysis**, **Challenge** and
+**Adapts & jams** (`dashboard/views/{story,live,analysis,challenge,adaptive}.js`).
+Old links such as `#/challenge` fall back to the Control room.
+
+- `dashboard/assets/core.js` — the replay player, guided tour (`G`), single-engagement
+  live runs and the settings drawer existed only for the removed pages and are gone, with
+  their markup in `index.html` and CSS in `app.css`. The router, chart kit, prefs,
+  sidebar layout and live-server detection are unchanged. The sidebar footer lists the
+  keys that still work (`1`–`3`, `F`, `M`, and the Control room's `Space`, `→`, `S`, `T`);
+  the mode chip reads *Offline* until the live server answers.
+- `dashboard/views/how.js` — the shortcuts table and the fair-play note now refer to the
+  Control room instead of the Live demo.
+- `dashboard/build.py` — no longer records the regime-switch scenarios or the
+  *Adapts & jams* results (`--regime-seeds`, `--alloc-seeds`, `--scenario-seeds` are
+  gone); `dashboard/adaptive.py` and the scenario recorder in `dashboard/traces.py` are
+  removed. The experiments behind them (exp15–exp17) are untouched.
+- `dashboard/serve.py` — `GET /api/run` (the Live demo's on-demand engagement) is
+  removed, and the server no longer warms banks for it at start-up. The Control room's
+  `api/control/*` routes are unchanged.
+- `dashboard/data.js` — the `adaptive` and `scenarios` data and the 12 scenario traces
+  are dropped (1.55 MB → 1.25 MB). Nothing was re-simulated: the data behind the kept
+  pages is byte-for-byte unchanged. `ots_dashboard.html` is rebuilt from it.
+
 ## 2026-11-16 — Control room: evade / deceive can be toggled mid-engagement
 
 Until now the red-team levers were fixed when a session was created, so ticking
