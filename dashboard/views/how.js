@@ -306,7 +306,7 @@
               el("li", {}, el("b", {}, "The radio's true path, "), "hop by hop."),
               el("li", {}, el("b", {}, "Which signals were ghosts "), "and which hops the sensor missed."),
               el("li", {}, el("b", {}, "The hidden recipe and its real secret key, "), "used only after the run to mark OTS's answer.")))),
-        el("p", { class: "card-foot" }, "The standard test is given exactly the same detections. Every run uses a fresh random secret. In the Live demo the settings switches “Reveal sensor mistakes” and “Show the hidden true path” change only the picture, never what OTS is given."))];
+        el("p", { class: "card-foot" }, "The standard test is given exactly the same detections. Every run uses a fresh random secret. In the Control room the settings switches “Reveal sensor mistakes” and “Show the true path” change only the picture, never what the system is given."))];
   }
 
   function glossary() {
@@ -327,23 +327,19 @@
       el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Glossary"), el("p", { class: "card-k" }, "Words used on these pages"))),
       el("dl", { class: "how-gloss" }, terms.map(([t, aka, d]) => [el("dt", {}, t, aka ? el("small", {}, aka) : null), el("dd", {}, d)])));
     const nViews = OTS.views.list().length;
-    const playerPages = OTS.views.list().filter((v) => v.usesPlayer).map((v) => v.nav);
     const key = (...ks) => el("td", {}, ks.map((k, i) => [i ? " " : null, el("kbd", {}, k)]));
     const row = (ks, text) => el("tr", {}, key(...ks), el("td", {}, text));
     const grp = (text) => el("tr", { class: "how-grp" }, el("td", { colspan: 2 }, text));
     const kb = el("article", { class: "card" },
-      el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Keyboard shortcuts"), el("p", { class: "card-k" }, "Drive the demo without a mouse"))),
+      el("div", { class: "card-h" }, el("div", {}, el("p", { class: "card-t" }, "Keyboard shortcuts"), el("p", { class: "card-k" }, "Drive the dashboard without a mouse"))),
       el("table", { class: "how-keys" }, el("tbody", {},
         grp("Anywhere"),
         row([`1–${nViews}`], "Switch page (in the order of the side menu)"),
-        row(["G"], "Start or stop the guided demo"),
         row(["F"], "Full screen"),
         row(["M"], "Minimize or expand the side menu"),
-        grp(playerPages.length ? `On the ${playerPages.join(" and ")} pages` : "On player pages"),
-        row(["Space"], "Play or pause"),
-        row(["←", "→"], "Step one hop back or forward"),
-        row(["R"], "Restart the run"),
-        row(["N"], "Next recorded run"),
+        grp("In the Control room"),
+        row(["Space"], "Run or pause the transmitter"),
+        row(["→"], "Step one hop"),
         row(["T"], "Reveal or hide the sensor's mistakes"),
         row(["S"], "Open or close the settings panel"))));
     return [sectionHead("Glossary and shortcuts", null), el("div", { class: "how-last" }, gl, kb)];
@@ -353,7 +349,7 @@
   OTS.views.register({
     id: "how", nav: "How it works", title: "How it works", hint: "The method in plain words",
     subtitle: "Listen, weigh every explanation, lock only when sure, then predict",
-    icon: "M12 3l9 5-9 5-9-5 9-5zm-9 9l9 5 9-5M3 16l9 5 9-5", usesPlayer: false,
+    icon: "M12 3l9 5-9 5-9-5 9-5zm-9 9l9 5 9-5M3 16l9 5 9-5",
     mount(root) {
       injectCss();
       const tr = exampleRun(), pending = [];
