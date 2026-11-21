@@ -116,16 +116,24 @@ runs recorded by `python -m dashboard.build`:
 | **Control room** | *you* drive the transmitter (live server only): press an algorithm to put the radio on air, press another to switch it mid-test; the system has to notice the switch, name the new algorithm and keep predicting the next hop. When it is **not sure** of its top channel (below 90%) it calls a **barrage** of at least two channels together, up to a **"max transmit freqs"** you set in the panel (default 3); a sure call is one channel. The jammer lights exactly the barrage it calls, next-hop accuracy counts a hit when the true channel is in the barrage (the exact top-1 rate is shown alongside), and the hop chart draws each barrage. A **red-team** panel lets the transmitter **fight back**: turn on **Evade** (the radio senses the barrage and hops off jammed channels, spreading out to crush the system's confidence) and/or **Deceive** (inject 1–3 coherent decoys of a chosen family into the sensor stream to mislead the ID and waste jam tones). Both levers are **live**: flip them before the run or at any hop of it (a paused run picks the change up on its next hop), and switch them off again whenever you like — the radio carries on from where its hop sequence stands. From the first hop the transmitter fights back, the engagement is a real closed loop — both sides move from history only, and the accuracy banner reads out the **jammer denial** that evasion drives down, split into the hops the radio **ignored** the jammer and the hops it **fought back** once you have toggled mid-run; the hop chart marks each flip (*evade on*, *decoys off*, …), the whole-session timeline shades the fighting-back hops violet, and the event log records them; decoys are drawn as purple diamonds, and the system view shows the radio's evasion pressure and the decoys fed each hop. A **"Did it work?"** scoreboard above the chart makes the payoff obvious to anyone: one click runs the **same** radio against the **same** jammer twice — once ignoring it, once fighting back — and reports the difference in plain words and bars (*how often the jammer jammed your signal* and *whether it could identify your radio*, e.g. "cut the jammer's hits by 93% and stopped it from identifying your radio"). A **Run / Pause** button sits on the hop chart (Space works too). Channels, hops, sensor (including a perfect, 100%-accurate one), speed, the transmit-freq cap, the red-team options and chart overlays live in a settings side panel you can pop in and out; a switch there hides the amber extra-barrage boxes on hops the call caught (keeping only the extra channel that made the catch, if any) |
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
-| **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
-| **How it works** | the method in plain words: sense, score, decide, predict; the expert bank; the two safety rules |
+| **Proof** | the conference paper's latest evaluation, claim by claim: 13 claims in five chapters (name the radio · why it works · call the next channel · act on it · honest limits). Confusion matrices per sensor; OTS vs a pairwise SPRT, a fixed-length LRT and a learned classifier; the sensor-model ablation and textbook Berlekamp-Massey; a mis-specified sensor; the identification converse; new-algorithm prediction vs the bank alone, PPM-C and a trained LSTM; conformal coverage; hops denied and the tones it costs; switch tracking; per-hop compute time; evasion and deception; the stated limits. Each card has its own sensor switch, names its source file, and can show a data table |
+| **How it works** | the method in plain words, one slide per section: one likelihood and four jobs, a pipeline diagram, six steps (sense, score, identify, predict, respond, watch) each shown on a real recorded run, the expert bank, the universal learners and the running vote, the predictor's real forecast turned into a jam plan, the two safety rules, fair play, a glossary |
 
 ```bash
 python -m dashboard.build      # record engagements, scoreboard and proofs -> dashboard/data.js (~2 min)
 # then open dashboard/index.html in a browser: replays offline, no server or external scripts
 python -m dashboard.serve      # http://127.0.0.1:8050 : same pages, plus new engagements run live
                                #   and the Control room at http://127.0.0.1:8050/#/control
+python -m dashboard.build --reuse   # keep the recorded runs, refresh the paper results (no simulator needed)
 python -m dashboard.build --reuse --standalone ots_demo.html   # one self-contained file to share
 ```
+
+The Proof and How-it-works pages read the paper's saved results in
+`docs/paper/ieee/data/*.json`, which `dashboard/paper.py` condenses into
+`data.paper`; three results whose JSON is not committed (the exp21 converse, the
+exp26/exp27 adversary) are quoted from the methodology write-up and labelled as
+such on the page. Both pages have a **Present** button (or `P`): one claim or
+section per slide, sized to the screen, full screen, `←`/`→` to move, `Esc` to leave.
 
 `dashboard/data.js` is committed, so the pages open straight from a fresh clone.
 Scenario, sensor quality, recorded run, display toggles and speed live in the
@@ -135,7 +143,8 @@ CSPRNG control where the bank answers "unknown" and the standard test names a
 generator anyway). The page menu can be docked on the left or the right and
 minimized to an icon rail (buttons at the bottom of the menu, or `M`); the choice
 is remembered per browser. Keys: `1`–`8` pages, `Space` play, `←`/`→` step, `R` restart,
-`N` next run, `T` sensor mistakes, `S` settings, `F` full screen, `M` minimize the menu. In the Control
+`N` next run, `T` sensor mistakes, `S` settings, `F` full screen, `M` minimize the menu, `P` present
+(Proof and How it works). In the Control
 room: `Space` run/pause, `→` one hop, `S` settings panel, `T` sensor mistakes.
 
 The dashboard replays the exact episodes `experiments.common.episode_for` draws
@@ -491,7 +500,8 @@ configs/             conference.yaml, quick.yaml
 experiments/         exp1..exp21 + shared style/harness
 scripts/run_all.py   run everything
 dashboard/           demo dashboard: recorder, proofs, build, live server, pages,
-                     control.py (the Control room session + CLI)
+                     control.py (the Control room session + CLI),
+                     paper.py (the paper's saved results for the Proof / How pages)
 tests/test_fhew.py                81 tests incl. the information-parity audit
 tests/test_mixture_allocation.py  37 tests for the mixture / regime / allocator
 tests/test_tracker.py             16 tests for the switch tracker, recurrence learner, control room
@@ -500,6 +510,7 @@ tests/test_conformal.py           10 tests for the conformal sets + identificati
 tests/test_evasion.py             13 tests for the reactive evasion transmitter
 tests/test_deception.py            9 tests for decoy injection + the counter-ID boundary
 tests/test_duel.py                 7 tests for the closed-loop engagement (fair-game checks)
+tests/test_dashboard_paper.py      5 tests for the dashboard's paper block and --reuse refresh
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)

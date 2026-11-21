@@ -11,6 +11,59 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-21 — Dashboard: Proof and How it works rebuilt on the paper's latest results, with a presenter mode
+
+The two explanatory pages still showed the dashboard's own 360-run scoreboard from
+2026-10-23: they predated the structured predictor (rule search, seed beam, wide BM),
+the conformal sets, the converse, the baselines, the response and runtime results and
+the closed-loop adversary, and the new-algorithm prediction numbers on them (36–48 %)
+were far below the current predictor's. Both pages now present the conference paper's
+evaluation, and both can be presented one slide at a time.
+
+- `dashboard/paper.py` (new, standard library only) — condenses the saved results in
+  `docs/paper/ieee/data/*.json` (confusion, identifier baselines, prediction, predictor
+  baselines, conformal, denial, runtime, switch tracking, sensor mismatch) into
+  `data.paper`. The exp21 converse and the exp26/exp27 adversary have no committed JSON;
+  their numbers are quoted from `methodology_and_results.md` §5.20 / §7 in `DOCUMENTED`,
+  each with its source, and the pages label them *Quoted*.
+- `dashboard/build.py` — the simulator is imported inside `build_data` only, so
+  `--reuse` runs without numpy/scipy. `--reuse` now keeps `data.js`'s recorded runs and
+  refreshes the paper block (`--standalone` optional); a full build includes the block.
+  New `read_data_js()`.
+- `dashboard/views/proof.js` (rewritten) — an overview (five headline tiles, the five
+  chapters) and 13 claims: confusion matrix per sensor (right / safe / dangerous cells
+  outlined, full-state-LCG weak spot); OTS vs pairwise SPRT, fixed-length LRT and a learned
+  classifier; the sensor-model ablation and textbook BM (`data.proof`); a mis-specified
+  sensor (two heatmaps); the converse; new-algorithm prediction vs the bank alone; vs PPM-C,
+  Markov-1 and a trained LSTM; conformal calibration and coverage; hops denied and tones
+  needed; switch tracking; per-hop compute time; evasion and deception; the paper's stated
+  limits. Each card has its own sensor switch (default Typical), names its source file, and
+  shows a data table with "Show data tables". Every headline is computed from the data.
+- `dashboard/views/how.js` (rewritten) — one slide per section: one likelihood / four
+  jobs; a pipeline diagram (sense → score → identify / predict → channel set → jam plan,
+  inside the box the switch tracker watches); six steps, each with what it did in a real
+  recorded run (or, for Watch, the paper's switch result); the expert bank; the universal
+  learners and the running vote; the predictor's real forecast at three moments of a run
+  turned into a jam plan, plus the tones per algorithm; the safety rules with the paper's
+  numbers (unknown 89 % vs a claimed crack in 88 % for the standard test); fair play; an
+  extended glossary and the new keys.
+- `dashboard/assets/core.js`, `app.css` — `OTS.present`: a page marks slides with
+  `data-slide` and attaches; **Present** (or `P`) shows one slide at a time, chrome hidden,
+  zoomed to fit the screen, full screen, with a progress bar and Back / Next / Exit;
+  `→ ↓ PgDn Space` next, `← ↑ PgUp` back, `Home` / `End`, `Esc` exits; leaving the page
+  stops it.
+- Tests: `tests/test_dashboard_paper.py` (5: every saved result present, confusion rows
+  sum to the seeds, numbers match the raw files, documented results are consistent, and
+  `--reuse` refreshes only the paper block). `data.js` and `ots_dashboard.html` rebuilt
+  with `--reuse`.
+
+**Not re-run:** the recorded replays and the dashboard scoreboard (Story, Live, Analysis,
+Challenge) are still the 2026-10-23 build. A full `python -m dashboard.build` would
+refresh them with the current predictor. The converse range on the Proof page
+(1.4–2.8×) is computed from the write-up's table; the paper's abstract says 1.3–2.7×.
+
+---
+
 ## 2026-11-16 — Control room: evade / deceive can be toggled mid-engagement
 
 Until now the red-team levers were fixed when a session was created, so ticking

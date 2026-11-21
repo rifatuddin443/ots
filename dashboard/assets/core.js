@@ -621,6 +621,7 @@ window.OTS = (function () {
     const v = VIEWS.find((x) => x.id === id) || VIEWS[0];
     if (!v) return;
     if (route.current === v.id && route.cleanup !== null) return;
+    present.stop(); present.page = null;
     if (route.cleanup) { try { route.cleanup(); } catch (e) { console.error(e); } }
     OTS.tip.hide();
     route.current = v.id;
@@ -774,6 +775,106 @@ window.OTS = (function () {
     OTS.emit("resize");
   };
 
+  // ============================================================ presenter
+  /** Presenter mode for the static pages: one slide at a time, sized to the screen.
+   *  A page marks each slide with data-slide="Title" (direct children of its .page)
+   *  and calls OTS.present.attach(page) after mounting; OTS.present.button() makes a
+   *  "Present" button. Keys while presenting: → ↓ PgDn Space next, ← ↑ PgUp back,
+   *  Home / End, Esc exits. P starts it on any page that attached slides. */
+  const present = (OTS.present = { page: null, slides: [], i: 0, active: false, bar: null, ownFs: false });
+  present.attach = (page) => { present.stop(); present.page = page; };
+  present.available = () => !!(present.page && present.page.isConnected && present.page.querySelector("[data-slide]"));
+  present.button = (label = "Present") => OTS.el("button", {
+    class: "btn primary present-btn", type: "button", title: "Show one slide at a time, full screen (P)",
+    onclick: () => present.start(),
+  }, "▶ " + label);
+  function presentFit() {
+    const s = present.slides[present.i];
+    if (!s) return;
+    const availW = window.innerWidth - 64, availH = window.innerHeight - 96;
+    let z = Math.max(0.6, Math.min(1.7, availW / 1240));
+    s.style.zoom = z;
+    // shrink a slide that would run off the bottom (reflowing narrower makes it no taller)
+    requestAnimationFrame(() => {
+      if (present.slides[present.i] !== s) return;
+      const h = s.getBoundingClientRect().height;
+      if (h > availH) { z = Math.max(0.55, z * availH / h); s.style.zoom = z; }
+    });
+  }
+  function presentShow(i) {
+    const n = present.slides.length;
+    present.i = Math.max(0, Math.min(n - 1, i));
+    present.slides.forEach((s, k) => { s.classList.toggle("slide-on", k === present.i); if (k !== present.i) s.style.zoom = ""; });
+    const cur = present.slides[present.i];
+    OTS.clear(present.bar.querySelector(".pres-where")).append(
+      OTS.el("b", { class: "num" }, `${present.i + 1} / ${n}`), cur.dataset.slide ? " · " + cur.dataset.slide : "");
+    present.bar.querySelector(".pres-prog i").style.width = `${((present.i + 1) / n) * 100}%`;
+    present.bar.querySelector("[data-act=prev]").disabled = present.i === 0;
+    present.bar.querySelector("[data-act=next]").disabled = present.i === n - 1;
+    OTS.tip.hide();
+    window.scrollTo(0, 0);
+    presentFit();
+  }
+  present.go = (d) => { if (present.active) presentShow(present.i + d); };
+  /** Jump to the slide that is (or contains) node, presenting or not. */
+  present.goTo = (node) => {
+    const slide = node && node.closest ? node.closest("[data-slide]") || node.querySelector("[data-slide]") : null;
+    if (!slide) return;
+    if (!present.active) { slide.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    const i = present.slides.indexOf(slide);
+    if (i >= 0) presentShow(i);
+  };
+  present.start = (at = 0) => {
+    if (!present.available()) return;
+    present.slides = [...present.page.querySelectorAll("[data-slide]")];
+    present.active = true;
+    const act = (a, label, text, fn) => OTS.el("button", { class: "btn" + (a === "next" ? " primary" : ""), type: "button", "data-act": a, "aria-label": label, title: label, onclick: fn }, text);
+    present.bar = OTS.el("div", { class: "pres-bar", role: "toolbar", "aria-label": "Presenter controls" },
+      OTS.el("div", { class: "pres-prog", "aria-hidden": "true" }, OTS.el("i")),
+      act("prev", "Previous slide (←)", "‹ Back", () => present.go(-1)),
+      OTS.el("span", { class: "pres-where", "aria-live": "polite" }),
+      act("next", "Next slide (→ or Space)", "Next ›", () => present.go(1)),
+      act("fs", "Full screen (F)", "⛶", () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())),
+      act("exit", "Stop presenting (Esc)", "✕ Exit", () => present.stop()));
+    document.body.append(present.bar);
+    OTS.$(".shell").classList.add("presenting");
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().then(() => { present.ownFs = true; }).catch(() => {});
+    }
+    window.addEventListener("resize", presentFit);
+    presentShow(at);
+  };
+  present.stop = () => {
+    if (!present.active) return;
+    present.active = false;
+    OTS.$(".shell").classList.remove("presenting");
+    for (const s of present.slides) { s.classList.remove("slide-on"); s.style.zoom = ""; }
+    if (present.bar) present.bar.remove();
+    present.bar = null;
+    window.removeEventListener("resize", presentFit);
+    if (present.ownFs && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    present.ownFs = false;
+    const cur = present.slides[present.i];
+    present.slides = [];
+    if (cur && cur.isConnected) cur.scrollIntoView({ block: "start" });
+  };
+  present.toggle = () => (present.active ? present.stop() : present.start());
+  function presentKey(e) {
+    if (!present.active || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    const next = ["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"], prev = ["ArrowLeft", "ArrowUp", "PageUp", "Backspace"];
+    if (e.target instanceof Element && e.target.matches("button") && (k === " " || k === "Enter")) return;  // let buttons click
+    let used = true;
+    if (next.includes(k)) present.go(1);
+    else if (prev.includes(k)) present.go(-1);
+    else if (k === "Home") presentShow(0);
+    else if (k === "End") presentShow(present.slides.length - 1);
+    else if (k === "Escape") present.stop();
+    else used = false;
+    if (used) { e.preventDefault(); e.stopPropagation(); }
+  }
+  document.addEventListener("keydown", presentKey, true);
+
   // ============================================================ keyboard
   function onKey(e) {
     if ((e.target instanceof Element && e.target.matches("input, select, textarea")) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -783,6 +884,7 @@ window.OTS = (function () {
     if (k === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); return; }
     if (k === "g") { tour.active ? tour.stop() : tour.start(); return; }
     if (k === "m") { OTS.setSidebar({ min: !side.min }); return; }
+    if (k === "p" && present.available()) { present.toggle(); return; }
     if (!v || !v.usesPlayer) return;
     if (k === " ") { e.preventDefault(); P.toggle(); }
     else if (k === "arrowright") { tour.stop(); P.pause(); P.step(1); }
