@@ -284,7 +284,7 @@
   OTS.views.register({
     id: "proof", nav: "Proof", title: "Proof at scale", hint: "The paper's results, claim by claim",
     subtitle: "Thirteen claims from the paper's latest experiments, each with its evidence and its source",
-    icon: "M4 20V10m6 10V4m6 16v-7m4 7H2", usesPlayer: false,
+    icon: "M4 20V10m6 10V4m6 16v-7m4 7H2",
     mount(root) {
       injectCss();
       const DATA = OTS.data, PP = DATA.paper;

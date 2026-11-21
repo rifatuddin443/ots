@@ -1,4 +1,4 @@
-/* OTS dashboard runtime: shared data helpers, chart kit, player, settings, router.
+/* OTS dashboard runtime: shared data helpers, chart kit, prefs, router.
  *
  * Every view lives in views/<id>.js and calls OTS.views.register({...}). Views
  * use only this API (documented inline) so the pages look and behave alike.
@@ -12,8 +12,7 @@ window.OTS = (function () {
   // ================================================================== events
   const handlers = new Map();
   /** Subscribe to an event; returns an unsubscribe function.
-   *  Events: 'load' (trace), 'tick' ({t, prev, animate}), 'lock' (trace), 'end' (trace),
-   *  'state' ({playing}), 'prefs' (prefs), 'live' (bool), 'route' (viewId), 'resize'. */
+   *  Events: 'prefs' (prefs), 'live' (bool), 'route' (viewId), 'resize'. */
   OTS.on = (evt, fn) => {
     if (!handlers.has(evt)) handlers.set(evt, new Set());
     handlers.get(evt).add(fn);
@@ -94,16 +93,9 @@ window.OTS = (function () {
   if (DATA) {
     for (const h of DATA.hypotheses) HYP.set(h.id, h);
     for (const e of DATA.emitters) EMIT.set(e.id, e);
-    // Regime-switch scenarios are selectable in the live demo but kept out of
-    // OTS.emitters, so the scoreboard and other pages are unaffected; register
-    // their metadata so emitName/emitter resolve a scenario id.
-    for (const s of (DATA.scenarios || [])) {
-      if (!EMIT.has(s.id)) EMIT.set(s.id, { ...s, scenario: true });
-    }
   }
   OTS.hypotheses = DATA ? DATA.hypotheses : [];
   OTS.emitters = DATA ? DATA.emitters : [];
-  OTS.scenarios = DATA && DATA.scenarios ? DATA.scenarios : [];
   OTS.presets = DATA ? DATA.presets : [];
   OTS.searchSizes = DATA ? DATA.search_sizes || {} : {};
   const hid = (id) => (id === "unknown" ? "H0" : id);
@@ -487,100 +479,19 @@ window.OTS = (function () {
 
   // ================================================================ prefs
   const PREF_KEY = "ots.prefs.v1";
-  OTS.prefs = { truth: false, path: false, tables: false, speed: 1 };
+  OTS.prefs = { truth: false, path: false, tables: false };
   try { Object.assign(OTS.prefs, JSON.parse(localStorage.getItem(PREF_KEY) || "{}")); } catch (_) { /* storage unavailable */ }
-  /** Change a display preference ('truth' sensor mistakes, 'path' hidden path, 'tables', 'speed'). */
+  /** Change a display preference ('truth' sensor mistakes, 'path' hidden path, 'tables'). */
   OTS.setPref = (k, v) => {
     OTS.prefs[k] = v;
     try { localStorage.setItem(PREF_KEY, JSON.stringify(OTS.prefs)); } catch (_) { /* ignore */ }
     OTS.emit("prefs", OTS.prefs);
   };
 
-  // ================================================================ player
-  /** Shared playback of one engagement for the Live and Analysis views.
-   *  player.trace, player.t (hops shown, 0..window), player.playing; methods below. */
-  const P = (OTS.player = { trace: null, t: 0, playing: false, holdUntil: 0, acc: 0, last: 0 });
-  P.load = (tr) => {
-    P.trace = tr; P.t = 0; P.acc = 0; P.holdUntil = 0;
-    OTS.emit("load", tr); OTS.emit("tick", { t: 0, prev: 0, animate: false });
-  };
-  P.play = () => {
-    if (!P.trace) return;
-    if (P.t >= P.trace.window) P.seek(0);
-    P.playing = true; P.last = performance.now(); OTS.emit("state", { playing: true });
-  };
-  P.pause = () => { if (P.playing) { P.playing = false; OTS.emit("state", { playing: false }); } };
-  P.toggle = () => (P.playing ? P.pause() : P.play());
-  /** Jump to hop t (0..window). Crossing the lock forward fires 'lock'. */
-  P.seek = (t, animate = false) => {
-    const tr = P.trace; if (!tr) return;
-    const prev = P.t; P.t = Math.max(0, Math.min(tr.window, t));
-    if (P.t === prev) return;
-    OTS.emit("tick", { t: P.t, prev, animate: animate && P.t === prev + 1 });
-    if (tr.declared && prev < tr.tau && P.t >= tr.tau) OTS.emit("lock", tr);
-    if (P.t >= tr.window && prev < tr.window) OTS.emit("end", tr);
-  };
-  P.step = (d) => P.seek(P.t + d, d > 0);
-  P.restart = () => { P.pause(); P.seek(0); };
-  /** Auto pace: slow while searching and around the lock, fast while tracking. */
-  P.intervalMs = () => {
-    const tr = P.trace; if (!tr) return 400;
-    const searching = tr.declared ? P.t < tr.tau : P.t < 16;
-    const nearLock = tr.declared && P.t >= tr.tau - 1 && P.t < tr.tau + 3;
-    return (searching || nearLock ? 560 : 170) / (OTS.prefs.speed || 1);
-  };
-  function loop(now) {
-    const dt = Math.min(250, now - (P.last || now)); P.last = now;
-    if (P.playing && P.trace && now >= P.holdUntil) {
-      P.acc += dt;
-      if (P.acc >= P.intervalMs()) {
-        P.acc = 0;
-        P.seek(P.t + 1, true);
-        if (P.trace.declared && P.t === P.trace.tau) P.holdUntil = now + 1800 / (OTS.prefs.speed || 1);
-        if (P.t >= P.trace.window) P.pause();
-      }
-    }
-    if (tour.active && tour.nextAt && now >= tour.nextAt) { tour.nextAt = 0; tour.next(); }
-    OTS.emit("frame", now);
-    requestAnimationFrame(loop);
-  }
-
-  // ======================================================= scenario + live
-  const SC = (OTS.scenario = { emitter: "lfsr", preset: "typical", run: 0, custom: { p_d: 0.8, p_fa: 0.02 } });
+  // ==================================================================== live
+  /** True once `python -m dashboard.serve` answers api/ping (the Control room needs it). */
   OTS.live = false;
-  /** Load a recorded engagement (emitter id, preset id, run index; wraps around). */
-  OTS.select = (emitter, preset, run = 0) => {
-    SC.emitter = emitter; SC.preset = preset;
-    const list = OTS.tracesFor(emitter, preset);
-    if (!list.length) { if (OTS.live) return OTS.runLive(); return; }
-    SC.run = ((run % list.length) + list.length) % list.length;
-    P.pause(); P.load(list[SC.run]); renderDrawer();
-  };
-  /** Next/previous recorded run for the current emitter + preset (live mode: a fresh run). */
-  OTS.nextRun = (d = 1) => {
-    if (OTS.live && (SC.preset === "custom" || !OTS.tracesFor(SC.emitter, SC.preset).length)) return OTS.runLive();
-    OTS.select(SC.emitter, SC.preset, SC.run + d);
-  };
-  OTS.loadingLive = false;
-  /** Run a brand-new engagement through the Python bank (live server only). */
-  OTS.runLive = async () => {
-    if (!OTS.live || OTS.loadingLive) return;
-    const pr = SC.preset === "custom" ? SC.custom : OTS.preset(SC.preset) || SC.custom;
-    const seed = Math.floor(Math.random() * 2147483647);
-    OTS.loadingLive = true; P.pause(); OTS.emit("liveloading", true); renderDrawer();
-    try {
-      const r = await fetch(`api/run?emitter=${encodeURIComponent(SC.emitter)}&p_d=${pr.p_d}&p_fa=${pr.p_fa}&seed=${seed}`, { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || r.statusText);
-      OTS.loadingLive = false; OTS.emit("liveloading", false);
-      P.load(j); renderDrawer(); P.play();
-    } catch (err) {
-      OTS.loadingLive = false; OTS.emit("liveloading", false); renderDrawer();
-      console.error("[OTS] live run failed", err);
-      alert("Live run failed: " + err.message);
-    }
-  };
-  /** Index of the clearest recorded run for a tour stop. */
+  /** Index of the clearest recorded run for an emitter + sensor preset. */
   OTS.bestRun = (emitter, preset) => {
     const list = OTS.tracesFor(emitter, preset);
     const tests = emitter === "csprng"
@@ -590,27 +501,12 @@ window.OTS = (function () {
     return 0;
   };
 
-  // ================================================================== tour
-  const tour = (OTS.tour = { active: false, i: -1, nextAt: 0 });
-  /** Guided demo: plays DATA.tour scenarios in the Live view, one after another. */
-  tour.start = () => { tour.active = true; tour.i = -1; if (route.current !== "live") location.hash = "#/live"; tour.next(); renderDrawer(); };
-  tour.stop = () => { if (!tour.active) return; tour.active = false; tour.nextAt = 0; renderDrawer(); OTS.emit("tour", false); };
-  tour.next = () => {
-    const stops = (DATA && DATA.tour) || []; if (!stops.length) return;
-    tour.i = (tour.i + 1) % stops.length;
-    const s = stops[tour.i];
-    OTS.select(s.emitter, s.preset, OTS.bestRun(s.emitter, s.preset));
-    OTS.emit("tour", true);
-    setTimeout(() => { if (tour.active) P.play(); }, 1500);
-  };
-  OTS.on("end", () => { if (tour.active) tour.nextAt = performance.now() + 5500; });
-
   // ================================================================ views
   const VIEWS = [];
   const route = { current: null, cleanup: null };
-  /** Register a page. view = {
-   *    id, title, subtitle, nav (short label), hint (one-line nav hint), icon (SVG path 'd' string, 24x24),
-   *    usesPlayer: bool (shows transport + settings drawer), mount(root) -> cleanup function }  */
+  /** Register a page (side-menu order = registration order; the first is the home page).
+   *  view = { id, title, subtitle, nav (short label), hint (one-line nav hint),
+   *           icon (SVG path 'd' string, 24x24), mount(root) -> cleanup function }  */
   OTS.views = {
     register(v) { VIEWS.push(v); },
     list: () => VIEWS,
@@ -629,13 +525,6 @@ window.OTS = (function () {
     OTS.$("#vTitle").textContent = v.title;
     OTS.$("#vSub").textContent = v.subtitle || "";
     document.title = "OTS · " + v.nav;
-    const shell = OTS.$(".shell");
-    shell.classList.toggle("has-drawer", !!v.usesPlayer);
-    OTS.$("#transport").hidden = !v.usesPlayer;
-    OTS.$("#settingsBtn").hidden = !v.usesPlayer;
-    if (v.usesPlayer && !P.trace) OTS.select(SC.emitter, SC.preset, OTS.bestRun(SC.emitter, SC.preset));
-    if (!v.usesPlayer) P.pause();
-    if (v.id !== "live" && v.id !== "analysis") tour.stop();
     const root = OTS.clear(OTS.$("#view"));
     window.scrollTo(0, 0);
     if (!DATA) {
@@ -647,7 +536,6 @@ window.OTS = (function () {
     try { route.cleanup = v.mount(root) || (() => {}); }
     catch (err) { console.error(err); root.append(OTS.el("div", { class: "card empty" }, "This page failed to load: " + err.message)); route.cleanup = () => {}; }
     OTS.emit("route", v.id);
-    renderTransport();
   }
 
   // ============================================================== chrome
@@ -657,86 +545,7 @@ window.OTS = (function () {
     VIEWS.forEach((v, i) => nav.append(OTS.el("a", { href: "#/" + v.id, "data-id": v.id, title: `${v.title} (${i + 1})` },
       ICON(v.icon || "M4 12h16"), OTS.el("b", {}, v.nav), OTS.el("small", {}, v.hint || ""))));
   }
-  function renderTransport() {
-    const tr = P.trace; if (!tr) return;
-    const play = OTS.$("#playBtn");
-    play.textContent = P.playing ? "❚❚ Pause" : (P.t >= tr.window ? "▶ Replay" : "▶ Play");
-    OTS.clear(OTS.$("#hopClock")).append("HOP ", OTS.el("b", { class: "num" }, String(P.t).padStart(3, "0")), "/" + tr.window);
-    OTS.$("#scenChip").textContent = `${OTS.emitName(tr.emitter)} · ${OTS.preset(tr.preset)?.name || "live"} sensor`;
-  }
-  function section(label, ...kids) { return OTS.el("div", { class: "dsec" }, OTS.el("span", { class: "dlabel" }, label), kids); }
-  function renderDrawer() {
-    const d = OTS.$("#drawerBody"); if (!d || !DATA) return;
-    OTS.clear(d);
-    const tr = P.trace;
-    d.append(section("Hidden radio pattern",
-      OTS.el("div", { class: "opt-grid" }, OTS.emitters.map((e) => OTS.el("button", {
-        class: "opt" + (SC.emitter === e.id ? " sel" : ""), title: e.blurb,
-        onclick: () => {
-          tour.stop();
-          if (SC.preset === "custom") { SC.emitter = e.id; renderDrawer(); OTS.runLive(); }
-          else OTS.select(e.id, SC.preset, OTS.bestRun(e.id, SC.preset));
-        },
-      }, OTS.el("b", {}, e.name), OTS.el("small", {}, e.id === "csprng" ? "control: unbreakable"
-        : e.new_algo ? "new · no expert in bank" : e.kind))))));
-    if (OTS.scenarios && OTS.scenarios.length) {
-      d.append(section("The radio changes recipe (adaptive)",
-        OTS.el("div", { class: "opt-grid" }, OTS.scenarios.map((s) => OTS.el("button", {
-          class: "opt" + (SC.emitter === s.id ? " sel" : ""), title: s.blurb,
-          onclick: () => {
-            tour.stop();
-            const pr = OTS.tracesFor(s.id, SC.preset).length ? SC.preset
-              : (OTS.tracesFor(s.id, "clear").length ? "clear" : "typical");
-            OTS.select(s.id, pr, OTS.bestRun(s.id, pr));
-          },
-        }, OTS.el("b", {}, s.name), OTS.el("small", {}, "switches mid-engagement"))))));
-    }
-    const presetBtns = OTS.presets.map((p) => OTS.el("button", {
-      class: "btn" + (SC.preset === p.id ? " sel" : ""),
-      onclick: () => { tour.stop(); OTS.select(SC.emitter, p.id, OTS.bestRun(SC.emitter, p.id)); },
-      title: `catches ${Math.round(p.p_d * 100)}% of hops, false-alarm rate ${p.p_fa} per channel`,
-    }, p.name));
-    if (OTS.live) presetBtns.push(OTS.el("button", { class: "btn" + (SC.preset === "custom" ? " sel" : ""),
-      onclick: () => { tour.stop(); SC.preset = "custom"; renderDrawer(); OTS.runLive(); } }, "Custom"));
-    const cur = SC.preset === "custom" ? SC.custom : OTS.preset(SC.preset);
-    d.append(section("Sensor quality", OTS.el("div", { class: "seg" }, presetBtns),
-      cur ? OTS.el("div", { class: "dhelp" }, `Catches ${Math.round(cur.p_d * 100)}% of hops and hears about ${(cur.p_fa * 15).toFixed(2)} ghost signals per hop.`) : null,
-      SC.preset === "custom" ? OTS.el("div", { class: "sliders" },
-        slider("Pd", "p_d", 0.5, 1, 0.05), slider("Pfa", "p_fa", 0, 0.1, 0.01)) : null));
-    const list = OTS.tracesFor(SC.emitter, SC.preset);
-    const isLive = tr && tr.preset === "live";
-    d.append(section("Engagement",
-      OTS.el("div", { class: "row", style: "gap:6px" },
-        OTS.el("button", { class: "btn icon", "aria-label": "Previous run", disabled: !list.length && !OTS.live, onclick: () => { tour.stop(); OTS.nextRun(-1); } }, "‹"),
-        OTS.el("span", { class: "mono small ink2", style: "min-width:128px;text-align:center" },
-          isLive ? `live · seed ${tr.seed}` : list.length ? `run ${SC.run + 1} of ${list.length} · seed ${list[SC.run]?.seed}` : "—"),
-        OTS.el("button", { class: "btn icon", "aria-label": "Next run", disabled: !list.length && !OTS.live, onclick: () => { tour.stop(); OTS.nextRun(1); } }, "›")),
-      OTS.live ? OTS.el("button", { class: "btn go", style: "margin-top:10px", disabled: OTS.loadingLive, onclick: () => { tour.stop(); OTS.runLive(); } },
-        OTS.loadingLive ? [OTS.el("span", { class: "spin" }), " Running…"] : "⚡ Run a new live engagement") : null,
-      OTS.el("div", { class: "dhelp" }, OTS.live ? "Live: new engagements are computed by the Python bank on demand."
-        : ["Replay: pre-recorded real runs. Run ", OTS.el("code", { style: "white-space:nowrap" }, "python -m dashboard.serve"), " for live runs."])));
-    d.append(section("Show on the chart",
-      toggle("Reveal sensor mistakes (ghosts and missed hops)", "truth"),
-      toggle("Show the hidden true path", "path"),
-      OTS.el("div", { class: "dhelp" }, "OTS never sees these: they are drawn for the audience.")));
-    d.append(section("Playback speed", OTS.el("div", { class: "seg" }, [0.5, 1, 2, 4].map((s) => OTS.el("button", {
-      class: "btn" + (OTS.prefs.speed === s ? " sel" : ""), onclick: () => { OTS.setPref("speed", s); renderDrawer(); } }, s + "×")))));
-    d.append(section("Guided demo",
-      OTS.el("button", { class: "btn" + (tour.active ? " sel" : ""), onclick: () => (tour.active ? tour.stop() : tour.start()) }, tour.active ? "■ Stop guided demo" : "★ Start guided demo"),
-      OTS.el("div", { class: "dhelp" }, "Plays five scenarios back to back with narration. Key: G")));
-  }
-  function slider(label, key, min, max, step) {
-    const out = OTS.el("span", { class: "num" }, SC.custom[key].toFixed(2));
-    const inp = OTS.el("input", { type: "range", min, max, step, value: SC.custom[key] });
-    inp.addEventListener("input", () => { SC.custom[key] = +inp.value; out.textContent = (+inp.value).toFixed(2); });
-    inp.addEventListener("change", () => OTS.runLive());
-    return OTS.el("label", {}, label, inp, out);
-  }
-  function toggle(label, key) {
-    const inp = OTS.el("input", { type: "checkbox" }); inp.checked = !!OTS.prefs[key];
-    inp.addEventListener("change", () => OTS.setPref(key, inp.checked));
-    return OTS.el("label", { class: "switch" }, inp, label);
-  }
+
   // ======================================================= sidebar layout
   // Two options for the page menu on wide screens: dock it on the left or the right
   // edge, and minimize it to an icon rail (page names stay in the tooltips).
@@ -768,12 +577,6 @@ window.OTS = (function () {
     requestAnimationFrame(() => { OTS.emit("resize"); window.dispatchEvent(new Event("resize")); });
   };
   OTS.sidebar = () => ({ ...side });
-
-  OTS.renderDrawer = renderDrawer;
-  OTS.openDrawer = (open) => {
-    const s = OTS.$(".shell"); s.classList.toggle("drawer-open", open == null ? !s.classList.contains("drawer-open") : open);
-    OTS.emit("resize");
-  };
 
   // ============================================================ presenter
   /** Presenter mode for the static pages: one slide at a time, sized to the screen.
@@ -878,59 +681,35 @@ window.OTS = (function () {
   // ============================================================ keyboard
   function onKey(e) {
     if ((e.target instanceof Element && e.target.matches("input, select, textarea")) || e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = e.key.toLowerCase(), v = VIEWS.find((x) => x.id === route.current);
-    const n = parseInt(k, 10);
+    const k = e.key.toLowerCase(), n = parseInt(k, 10);
     if (n >= 1 && n <= VIEWS.length) { OTS.views.go(VIEWS[n - 1].id); return; }
     if (k === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); return; }
-    if (k === "g") { tour.active ? tour.stop() : tour.start(); return; }
     if (k === "m") { OTS.setSidebar({ min: !side.min }); return; }
     if (k === "p" && present.available()) { present.toggle(); return; }
-    if (!v || !v.usesPlayer) return;
-    if (k === " ") { e.preventDefault(); P.toggle(); }
-    else if (k === "arrowright") { tour.stop(); P.pause(); P.step(1); }
-    else if (k === "arrowleft") { tour.stop(); P.pause(); P.step(-1); }
-    else if (k === "r") { tour.stop(); P.restart(); }
-    else if (k === "n") { tour.stop(); OTS.nextRun(1); }
-    else if (k === "t") { OTS.setPref("truth", !OTS.prefs.truth); renderDrawer(); }
-    else if (k === "s") OTS.openDrawer();
+    // page keys (Space, arrows, S, T in the Control room) are handled by the page itself
   }
 
   // ================================================================ boot
   OTS.boot = () => {
     buildNav();
-    OTS.$("#playBtn").addEventListener("click", () => P.toggle());
-    OTS.$("#restartBtn").addEventListener("click", () => { tour.stop(); P.restart(); });
-    OTS.$("#backBtn").addEventListener("click", () => { tour.stop(); P.pause(); P.step(-1); });
-    OTS.$("#fwdBtn").addEventListener("click", () => { tour.stop(); P.pause(); P.step(1); });
-    OTS.$("#settingsBtn").addEventListener("click", () => OTS.openDrawer());
-    OTS.$("#drawerClose").addEventListener("click", () => OTS.openDrawer(false));
-    OTS.$(".drawer-backdrop").addEventListener("click", () => OTS.openDrawer(false));
     OTS.$("#sideMinBtn").addEventListener("click", () => OTS.setSidebar({ min: !side.min }));
     OTS.$("#sideSwapBtn").addEventListener("click", () => OTS.setSidebar({ right: !side.right }));
     OTS.$("#sideLeftBtn").addEventListener("click", () => OTS.setSidebar({ right: false }));
     OTS.$("#sideRightBtn").addEventListener("click", () => OTS.setSidebar({ right: true }));
     applySidebar();
-    for (const e of ["tick", "state", "load"]) OTS.on(e, renderTransport);
-    OTS.on("load", renderDrawer);
     document.addEventListener("keydown", onKey);
     window.addEventListener("hashchange", navTo);
-    if (window.innerWidth > 1280) OTS.$(".shell").classList.add("drawer-open");
-    if (DATA) {
-      const first = DATA.tour && DATA.tour[0] ? DATA.tour[0] : { emitter: "lfsr", preset: "typical" };
-      SC.emitter = first.emitter; SC.preset = first.preset;
-      OTS.$("#dataStamp").textContent = `Data built ${DATA.generated}`;
-    }
+    if (DATA) OTS.$("#dataStamp").textContent = `Data built ${DATA.generated}`;
     navTo();
     if (location.protocol.startsWith("http")) {
       fetch("api/ping", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => {
         if (j && j.live) {
           OTS.live = true;
           const chip = OTS.$("#modeChip"); chip.classList.add("live"); OTS.$("#modeText").textContent = "Live engine";
-          renderDrawer(); OTS.emit("live", true);
+          OTS.emit("live", true);
         }
       }).catch(() => {});
     }
-    requestAnimationFrame(loop);
   };
   return OTS;
 })();
