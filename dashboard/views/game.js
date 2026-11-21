@@ -20,6 +20,14 @@
     return `rgb(${c[0]},${c[1]},${c[2]})`;
   }
 
+  /** Run fn now if the live server already answered, else once it does.
+   *  Returns an unsubscribe function for the page cleanup. */
+  function whenLive(fn) {
+    if (OTS.live) { fn(); return () => {}; }
+    const off = OTS.on("live", (on) => { if (on) fn(); });
+    return off;
+  }
+
   // ===================================================================== replay
   function replayCard(root) {
     const card = el("div", { class: "card" });
@@ -59,14 +67,15 @@
 
     // live controls
     const liveBar = el("div", { class: "gstat", style: "gap:8px;flex-wrap:wrap" });
-    if (OTS.live) {
+    function addLive() {
+      if (liveBar.firstChild) return;
       const runBtn = el("button", { class: "btn go", type: "button" }, "⟲ New live run");
       runBtn.onclick = async () => {
         if (!state.duel) return;
         runBtn.disabled = true; runBtn.textContent = "running…";
         try {
           const seed = Math.floor(Math.random() * 1e6);
-          const r = await fetch(`/api/game/duel?hopper=${state.duel.hopper}&seed=${seed}&window=${state.duel.window}`,
+          const r = await fetch(`api/game/duel?hopper=${state.duel.hopper}&seed=${seed}&window=${state.duel.window}`,
             { cache: "no-store" });
           const tr = await r.json();
           const keep = state.duel.name;
@@ -77,6 +86,7 @@
       };
       liveBar.append(runBtn, el("span", { class: "muted" }, "live: a fresh engagement from the Python engine"));
     }
+    const offLive = whenLive(addLive);
 
     // running stats
     const stat = el("div", { class: "gstat" });
@@ -137,7 +147,7 @@
     }
 
     pick(duels[0], sel.children[0]);
-    return pause;        // cleanup
+    return () => { pause(); offLive(); };        // cleanup
   }
 
   function statPill(label, sub, big, color) {
@@ -211,7 +221,8 @@
     }
     render();
 
-    if (OTS.live) {
+    function addLive() {
+      if (live.firstChild) return;
       let session = null, busy = false;
       const stepBtn = el("button", { class: "btn go", type: "button" }, "▶ Step PSRO");
       const resetBtn = el("button", { class: "btn", type: "button" }, "⟲ Reset");
@@ -221,10 +232,10 @@
         const was = stepBtn.textContent; stepBtn.textContent = "training…";
         try {
           if (!session) {
-            const r = await fetch("/api/game/psro/new", { cache: "no-store" });
+            const r = await fetch("api/game/psro/new", { cache: "no-store" });
             const s = await r.json(); session = s.session;
           }
-          const r = await fetch(`/api/game/psro/step?session=${session}`, { cache: "no-store" });
+          const r = await fetch(`api/game/psro/step?session=${session}`, { cache: "no-store" });
           const s = await r.json();
           cur = {
             iterations: s.iterations, exploitability: s.exploitability,
@@ -242,7 +253,7 @@
         stepBtn.disabled = false; stepBtn.textContent = "▶ Step PSRO"; };
       live.append(stepBtn, resetBtn, note);
     }
-    return () => {};
+    return whenLive(addLive);
   }
 
   function drawCurve(wrap, c) {

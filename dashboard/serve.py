@@ -1,13 +1,11 @@
-"""Serve the dashboard and run new engagements live through the real bank.
+"""Serve the dashboard and run the Control room live through the real tracker.
 
 Usage:
     python -m dashboard.serve                 # http://127.0.0.1:8050
     python -m dashboard.serve --port 9000 --open
 
-Static files come from ``dashboard/``; ``GET /api/run`` records one engagement
-on demand (``emitter``, ``p_d``, ``p_fa``, ``seed``) and returns the same trace
-format ``data.js`` holds. The server is single-threaded on purpose: banks are
-stateful and are reused across requests for the same sensor condition.
+Static files come from ``dashboard/``. The server is single-threaded on purpose:
+the control sessions are stateful.
 
 The Control room page drives a transmitter interactively (``dashboard.control``):
 ``GET /api/control/new`` (``channels``, ``hops``, ``p_d``, ``p_fa``, ``seed``)
@@ -16,6 +14,11 @@ advances it ``n`` hops with the transmitter on ``algo``, switching it when the
 algorithm changed. Both take the red-team levers (``evade``, ``deceive``, ``decoy``,
 ``n_decoys``) and the jammer's budget (``max_tones``); on ``step`` they apply from the
 next hop, so the transmitter can start or stop fighting back in the middle of a run.
+
+The Game page (``dashboard.game``) runs the RL game live: ``GET /api/game/duel``
+(``hopper``, ``seed``, ``window``) plays a fresh hopper-vs-OTS-jammer engagement,
+``GET /api/game/psro/new`` opens a PSRO session and ``GET /api/game/psro/step``
+(``session``) runs one double-oracle iteration of it.
 """
 
 from __future__ import annotations
@@ -29,36 +32,7 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 from dashboard import control as CR
-from dashboard import traces as T
 from dashboard.build import HERE
-
-_EMITTER_IDS = {e["id"] for e in T.EMITTERS}
-_ENGINES: OrderedDict = OrderedDict()
-_MAX_ENGINES = 6
-
-
-def engine_for(p_d: float, p_fa: float) -> T.Engine:
-    key = (round(p_d, 3), round(p_fa, 3))
-    if key in _ENGINES:
-        _ENGINES.move_to_end(key)
-    else:
-        _ENGINES[key] = T.Engine.build(*key)
-        if len(_ENGINES) > _MAX_ENGINES:
-            _ENGINES.popitem(last=False)
-    return _ENGINES[key]
-
-
-def run_request(query: dict) -> dict:
-    emitter = query.get("emitter", ["lfsr"])[0]
-    if emitter not in _EMITTER_IDS:
-        raise ValueError(f"unknown emitter {emitter!r}")
-    p_d = float(query.get("p_d", ["0.8"])[0])
-    p_fa = float(query.get("p_fa", ["0.02"])[0])
-    seed = int(query.get("seed", ["1000"])[0])
-    if not (0.3 <= p_d <= 1.0 and 0.0 <= p_fa <= 0.2 and 0 <= seed < 2 ** 31):
-        raise ValueError("p_d must be in [0.3, 1], p_fa in [0, 0.2], seed in [0, 2^31)")
-    return T.record_engagement(engine_for(p_d, p_fa), emitter, seed, preset="live")
-
 
 _SESSIONS: OrderedDict = OrderedDict()
 _MAX_SESSIONS = 4
@@ -126,7 +100,7 @@ def game_psro_step(query: dict) -> dict:
     return GM.psro_step(query)
 
 
-_API = {"/api/run": run_request, "/api/control/new": control_new, "/api/control/step": control_step,
+_API = {"/api/control/new": control_new, "/api/control/step": control_step,
         "/api/game/duel": game_duel, "/api/game/psro/new": game_psro_new,
         "/api/game/psro/step": game_psro_step}
 
@@ -176,9 +150,6 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=8050)
     p.add_argument("--open", action="store_true", help="open the dashboard in a browser")
     args = p.parse_args(argv)
-    print("[dashboard] warming up banks for the sensor presets ...")
-    for pr in T.PRESETS:
-        engine_for(pr["p_d"], pr["p_fa"])
     print("[dashboard] building the control-room experts for 16 channels ...")
     CR.library_for(16, 300)
     server = HTTPServer((args.host, args.port), Handler)

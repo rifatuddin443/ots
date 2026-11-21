@@ -11,6 +11,35 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-21 — RL branch rebased onto the latest dashboard; The game is page 4
+
+`claude/novel-rl-psro` now carries everything on `claude/vibrant-dirac-22pndv` (the
+three-page dashboard, the Proof / How it works rebuild on the paper's results,
+presenter mode, the thesis book) plus the RL layer and The game page on top.
+
+- The Game page was missing from the shared single-file dashboard: the previous commit
+  added it to `dashboard/` but never rebuilt `ots_dashboard.html`. Rebuilt now with
+  `--reuse --standalone`, so the page is in the bundle.
+- `dashboard/index.html` — The game is registered **after** How it works, so the
+  trimmed dashboard's keys stay put (`1` Control room, `2` Proof, `3` How it works) and
+  `4` opens The game; the sidebar shortcut hint reads `1`–`4`.
+- `dashboard/build.py` — on the trimmed build: a full build records `data.game`
+  (`--no-game` skips it); `--reuse` keeps the recorded Game block alongside the
+  recorded runs; new `--reuse --game` re-records just that block.
+- `dashboard/serve.py` — the three `/api/game/*` routes on the trimmed API (the removed
+  `/api/run` stays removed).
+- `dashboard/views/game.js` — the live controls (**New live run**, **Step PSRO**) now
+  appear when the server's ping answers, not only if it had answered before the page
+  mounted (opening `#/game` directly used to miss them); API paths are relative like the
+  Control room's. `app.css` regains the `.hopclock` style the trim removed (the Game
+  transport uses it).
+- `dashboard/data.js` — vibrant-dirac's data unchanged, plus the recorded `game` block.
+- Verified: all four pages render offline from `ots_dashboard.html` with no console
+  errors; served, the Game page's live duel and PSRO step work, and `/api/control/*`
+  still answer.
+
+---
+
 ## 2026-11-21 — Dashboard: a "Game" page for the RL game (offline + live)
 
 Visualises the RL layer in the demo dashboard, offline from ``data.js`` and live from
@@ -74,6 +103,98 @@ exploitability certificate via a double-oracle PSRO game. All on a separate bran
   bounds robustness too. Not promoted to a headline figure for that reason.
 - `run_all.py` leaves exp28/exp29 **opt-in** (`--only`) so the default sweep is not
   slowed by PSRO/training; both run standalone or via `--only`.
+
+---
+
+## 2026-11-21 — Dashboard: Proof and How it works rebuilt on the paper's latest results, with a presenter mode
+
+The two explanatory pages still showed the dashboard's own 360-run scoreboard from
+2026-10-23: they predated the structured predictor (rule search, seed beam, wide BM),
+the conformal sets, the converse, the baselines, the response and runtime results and
+the closed-loop adversary, and the new-algorithm prediction numbers on them (36–48 %)
+were far below the current predictor's. Both pages now present the conference paper's
+evaluation, and both can be presented one slide at a time.
+
+- `dashboard/paper.py` (new, standard library only) — condenses the saved results in
+  `docs/paper/ieee/data/*.json` (confusion, identifier baselines, prediction, predictor
+  baselines, conformal, denial, runtime, switch tracking, sensor mismatch) into
+  `data.paper`. The exp21 converse and the exp26/exp27 adversary have no committed JSON;
+  their numbers are quoted from `methodology_and_results.md` §5.20 / §7 in `DOCUMENTED`,
+  each with its source, and the pages label them *Quoted*.
+- `dashboard/build.py` — the simulator is imported inside `build_data` only, so
+  `--reuse` runs without numpy/scipy. `--reuse` now keeps `data.js`'s recorded runs and
+  refreshes the paper block (`--standalone` optional); a full build includes the block.
+  New `read_data_js()`.
+- `dashboard/views/proof.js` (rewritten) — an overview (five headline tiles, the five
+  chapters) and 13 claims: confusion matrix per sensor (right / safe / dangerous cells
+  outlined, full-state-LCG weak spot); OTS vs pairwise SPRT, fixed-length LRT and a learned
+  classifier; the sensor-model ablation and textbook BM (`data.proof`); a mis-specified
+  sensor (two heatmaps); the converse; new-algorithm prediction vs the bank alone; vs PPM-C,
+  Markov-1 and a trained LSTM; conformal calibration and coverage; hops denied and tones
+  needed; switch tracking; per-hop compute time; evasion and deception; the paper's stated
+  limits. Each card has its own sensor switch (default Typical), names its source file, and
+  shows a data table with "Show data tables". Every headline is computed from the data.
+- `dashboard/views/how.js` (rewritten) — one slide per section: one likelihood / four
+  jobs; a pipeline diagram (sense → score → identify / predict → channel set → jam plan,
+  inside the box the switch tracker watches); six steps, each with what it did in a real
+  recorded run (or, for Watch, the paper's switch result); the expert bank; the universal
+  learners and the running vote; the predictor's real forecast at three moments of a run
+  turned into a jam plan, plus the tones per algorithm; the safety rules with the paper's
+  numbers (unknown 89 % vs a claimed crack in 88 % for the standard test); fair play; an
+  extended glossary and the new keys.
+- `dashboard/assets/core.js`, `app.css` — `OTS.present`: a page marks slides with
+  `data-slide` and attaches; **Present** (or `P`) shows one slide at a time, chrome hidden,
+  zoomed to fit the screen, full screen, with a progress bar and Back / Next / Exit;
+  `→ ↓ PgDn Space` next, `← ↑ PgUp` back, `Home` / `End`, `Esc` exits; leaving the page
+  stops it.
+- Tests: `tests/test_dashboard_paper.py` (5: every saved result present, confusion rows
+  sum to the seeds, numbers match the raw files, documented results are consistent, and
+  `--reuse` refreshes only the paper block). `data.js` and `ots_dashboard.html` rebuilt
+  with `--reuse` on top of the trimmed 2026-11-18 dashboard.
+
+**Not re-run:** the recorded example run (How it works) and the two `data.proof`
+ablations (Proof, claim 3) are still the 2026-10-23 build; a full
+`python -m dashboard.build` would refresh them with the current code. The converse
+range on the Proof page (1.4–2.8×) is computed from the write-up's table; the paper's
+abstract says 1.3–2.7×.
+
+---
+
+## 2026-11-18 — Dashboard trimmed to the Control room, Proof and How it works
+
+The page menu had eight entries, and most of them repeated what the Control room
+already does live. It now has three, with the Control room first (and the home page):
+
+| Kept | Why |
+| --- | --- |
+| **Control room** | the main page: drive the transmitter, switch algorithms, jam, fight back |
+| **Proof** | results over hundreds of recorded runs, which a single live session cannot show |
+| **How it works** | the method in plain words, for an audience new to it |
+
+Removed: **Story**, **Live demo**, **Decision analysis**, **Challenge** and
+**Adapts & jams** (`dashboard/views/{story,live,analysis,challenge,adaptive}.js`).
+Old links such as `#/challenge` fall back to the Control room.
+
+- `dashboard/assets/core.js` — the replay player, guided tour (`G`), single-engagement
+  live runs and the settings drawer existed only for the removed pages and are gone, with
+  their markup in `index.html` and CSS in `app.css`. The router, chart kit, prefs,
+  sidebar layout and live-server detection are unchanged. The sidebar footer lists the
+  keys that still work (`1`–`3`, `F`, `M`, and the Control room's `Space`, `→`, `S`, `T`);
+  the mode chip reads *Offline* until the live server answers.
+- `dashboard/views/how.js` — the shortcuts table and the fair-play note now refer to the
+  Control room instead of the Live demo.
+- `dashboard/build.py` — no longer records the regime-switch scenarios or the
+  *Adapts & jams* results (`--regime-seeds`, `--alloc-seeds`, `--scenario-seeds` are
+  gone); `dashboard/adaptive.py` and the scenario recorder in `dashboard/traces.py` are
+  removed. The experiments behind them (exp15–exp17) are untouched.
+- `dashboard/serve.py` — `GET /api/run` (the Live demo's on-demand engagement) is
+  removed, and the server no longer warms banks for it at start-up. The Control room's
+  `api/control/*` routes are unchanged.
+- `dashboard/data.js` — the `adaptive` and `scenarios` data and the 12 scenario traces
+  are dropped (1.55 MB → 1.25 MB). Nothing was re-simulated: the data behind the kept
+  pages is byte-for-byte unchanged. `ots_dashboard.html` is rebuilt from it.
+
+---
 
 ## 2026-11-16 — Control room: evade / deceive can be toggled mid-engagement
 

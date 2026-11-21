@@ -4,10 +4,20 @@ Usage:
     python -m dashboard.build                     # 3 engagements per emitter x sensor, 20-seed scoreboard
     python -m dashboard.build --quick             # 1 engagement each, 4-seed scoreboard and proofs
     python -m dashboard.build --standalone ots_demo.html   # also write a single self-contained page
-    python -m dashboard.build --reuse --standalone ots_demo.html   # bundle the existing data.js only
+    python -m dashboard.build --reuse             # keep the recorded runs, refresh the paper results
+    python -m dashboard.build --reuse --standalone ots_demo.html   # ... and bundle one page
+    python -m dashboard.build --reuse --game      # ... and re-record only the RL Game block
 
-Open ``dashboard/index.html`` in a browser afterwards (no server needed), or run
-``python -m dashboard.serve`` to also run new engagements live.
+The paper results (``data.paper``, shown on the Proof and How-it-works pages) are
+read from the saved JSON in ``docs/paper/ieee/data`` by :mod:`dashboard.paper`, so
+``--reuse`` needs only the standard library, not the simulator. The RL Game block
+(``data.game``, shown on The game page) is recorded by :mod:`dashboard.game` in a full
+build (``--no-game`` skips it); ``--reuse`` keeps the recorded one, and ``--reuse --game``
+re-records just that block.
+
+Open ``dashboard/index.html`` in a browser afterwards (no server needed for the
+Proof and How it works pages), or run ``python -m dashboard.serve`` to also drive
+the Control room live.
 """
 
 from __future__ import annotations
@@ -19,10 +29,7 @@ import re
 import time
 from pathlib import Path
 
-from experiments import common as C
-from dashboard import adaptive as AD
-from dashboard import proof as P
-from dashboard import traces as T
+from dashboard import paper as PAPER
 
 HERE = Path(__file__).resolve().parent
 DATA_JS = HERE / "data.js"
@@ -31,9 +38,12 @@ DATA_TAG = '<script src="data.js"></script>'
 
 
 def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
-               n_regime_seeds: int = 10, n_alloc_seeds: int = 6,
-               n_scenario_seeds: int = 3, with_game: bool = True,
-               game_quick: bool = False, verbose: bool = True) -> dict:
+               with_game: bool = True, game_quick: bool = False,
+               verbose: bool = True) -> dict:
+    # the simulator is imported here, not at module level, so --reuse runs without it
+    from experiments import common as C
+    from dashboard import proof as P
+    from dashboard import traces as T
     t0 = time.time()
     traces = []
     for pr in T.PRESETS:
@@ -57,14 +67,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         print("  proof: textbook Berlekamp-Massey vs state-filtered, sensor-aware vs naive")
     proof = {"bm_vs_filtered": P.bm_vs_filtered(n_proof_seeds),
              "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
-    adaptive = AD.build(n_regime_seeds, n_alloc_seeds, verbose=verbose)
-    scenario_traces, scenario_meta = build_scenarios(n_scenario_seeds, verbose=verbose)
-    game = None
-    if with_game:
-        if verbose:
-            print("  game: RL duel replays + PSRO exploitability certificate")
-        from dashboard import game as GM
-        game = GM.record_game(quick=game_quick, verbose=verbose)
+    game = record_game(game_quick, verbose) if with_game else None
     return {
         "version": 3,
         "generated": dt.date.today().isoformat(),
@@ -72,42 +75,30 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         "hypotheses": T.HYPOTHESES, "emitters": T.EMITTERS,
         "presets": T.PRESETS, "tour": T.TOUR,
         "search_sizes": T.search_sizes(engine),
-        "traces": traces + scenario_traces, "scoreboard": board, "proof": proof,
-        "adaptive": adaptive, "scenarios": scenario_meta, "game": game,
-        "build_seconds": round(time.time() - t0, 1),
+        "traces": traces, "scoreboard": board, "proof": proof, "paper": PAPER.load(),
+        "game": game, "build_seconds": round(time.time() - t0, 1),
     }
 
 
-#: presets the regime-switch scenarios are recorded under (the live demo lets you
-#: step through seeds within each).
-_SCENARIO_PRESETS = ("clear", "typical")
-
-
-def build_scenarios(n_seeds: int, *, verbose: bool = True):
-    """Record the playable regime-switch scenarios + their picker metadata."""
-    presets = {p["id"]: p for p in T.PRESETS}
-    seeds = C.seeds(n_seeds, base=1001)
-    traces, meta = [], []
-    for scen in T.SWITCH_SCENARIOS:
-        meta.append({"id": scen["id"], "name": scen["name"], "kind": scen["kind"],
-                     "blurb": scen["blurb"], "from_label": scen["from_label"],
-                     "to_label": scen["to_label"], "switch_at": T.SCENARIO_SWITCH})
-        for pid in _SCENARIO_PRESETS:
-            pr = presets[pid]
-            for s in seeds:
-                tr = T.record_switch_scenario(scen, pr["p_d"], pr["p_fa"], s, preset=pid)
-                traces.append(tr)
-                if verbose:
-                    print(f"  scenario {scen['id']:16s} {pid:8s} seed={s:<5d} "
-                          f"after: flush={tr['acc_flush_after']} vs {tr['acc_noflush_after']} "
-                          f"alarms={tr['alarms']}")
-    return traces, meta
+def record_game(quick: bool = False, verbose: bool = True) -> dict:
+    """The RL Game block: duel replays + the PSRO exploitability certificate."""
+    from dashboard import game as GM
+    if verbose:
+        print("  game: RL duel replays + PSRO exploitability certificate")
+    return GM.record_game(quick=quick, verbose=verbose)
 
 
 def to_js(data: dict) -> str:
     body = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     return ("// Generated by `python -m dashboard.build` -- real runs of fhew.HypothesisBank.\n"
             f"window.OTS_DATA = {body};\n")
+
+
+def read_data_js(path: Path | None = None) -> dict:
+    """Parse a ``data.js`` written by :func:`to_js` back into the data dict."""
+    text = (path or DATA_JS).read_text(encoding="utf-8")
+    start = text.index("window.OTS_DATA")
+    return json.loads(text[text.index("{", start):text.rindex("}") + 1])
 
 
 def write_standalone(js: str, path: Path) -> Path:
@@ -139,29 +130,35 @@ def main(argv=None):
     p.add_argument("--traces", type=int, default=3, help="engagements per emitter x sensor preset")
     p.add_argument("--score-seeds", type=int, default=20, help="scoreboard seeds per emitter x preset")
     p.add_argument("--proof-seeds", type=int, default=40, help="seeds per point in the ablation proofs")
-    p.add_argument("--regime-seeds", type=int, default=10, help="seeds per alpha for regime-switch recovery")
-    p.add_argument("--alloc-seeds", type=int, default=6, help="seeds per point for the allocation reward")
-    p.add_argument("--scenario-seeds", type=int, default=3, help="seeds per regime-switch scenario x preset")
     p.add_argument("--quick", action="store_true", help="1 engagement each, 4-seed scoreboard")
     p.add_argument("--no-game", action="store_true", help="skip the RL Game page recording (PSRO is slow)")
+    p.add_argument("--game", action="store_true",
+                   help="with --reuse: also re-record the RL Game block (needs the simulator)")
     p.add_argument("--standalone", type=Path, help="also write a single self-contained HTML page")
     p.add_argument("--reuse", action="store_true",
-                   help="skip the simulation and reuse the existing data.js (for --standalone)")
+                   help="skip the simulation: keep data.js's recorded runs, refresh the paper results")
     p.add_argument("-q", "--quiet", action="store_true")
     args = p.parse_args(argv)
     if args.quick:
         args.traces, args.score_seeds, args.proof_seeds = 1, 4, 4
-        args.regime_seeds, args.alloc_seeds, args.scenario_seeds = 3, 2, 2
     if args.reuse:
-        if not args.standalone:
-            p.error("--reuse only makes sense with --standalone")
-        print(f"[dashboard] wrote {write_standalone(DATA_JS.read_text(encoding='utf-8'), args.standalone)}")
+        data = read_data_js()
+        data["paper"] = PAPER.load()
+        if args.game:
+            data["game"] = record_game(args.quick, not args.quiet)
+        js = to_js(data)
+        DATA_JS.write_text(js, encoding="utf-8")
+        print(f"[dashboard] refreshed the paper results in {DATA_JS} ({len(js) / 1e6:.2f} MB; "
+              f"recorded runs from {data.get('generated', '?')} kept"
+              f"{'; Game block re-recorded' if args.game else ''})")
+        if args.standalone:
+            print(f"[dashboard] wrote {write_standalone(js, args.standalone)}")
         return
 
+    if args.game:
+        p.error("--game only makes sense with --reuse (a full build records the Game block)")
     data = build_data(args.traces, args.score_seeds, args.proof_seeds,
-                      n_regime_seeds=args.regime_seeds, n_alloc_seeds=args.alloc_seeds,
-                      n_scenario_seeds=args.scenario_seeds, with_game=not args.no_game,
-                      game_quick=args.quick, verbose=not args.quiet)
+                      with_game=not args.no_game, game_quick=args.quick, verbose=not args.quiet)
     js = to_js(data)
     DATA_JS.write_text(js, encoding="utf-8")
     n_ep = sum(r["n"] for r in data["scoreboard"]["rows"])
