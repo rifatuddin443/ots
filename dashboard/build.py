@@ -32,7 +32,8 @@ DATA_TAG = '<script src="data.js"></script>'
 
 def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
                n_regime_seeds: int = 10, n_alloc_seeds: int = 6,
-               n_scenario_seeds: int = 3, verbose: bool = True) -> dict:
+               n_scenario_seeds: int = 3, with_game: bool = True,
+               game_quick: bool = False, verbose: bool = True) -> dict:
     t0 = time.time()
     traces = []
     for pr in T.PRESETS:
@@ -58,6 +59,12 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
              "sensor_ablation": P.sensor_ablation(max(1, n_proof_seeds * 3 // 4))}
     adaptive = AD.build(n_regime_seeds, n_alloc_seeds, verbose=verbose)
     scenario_traces, scenario_meta = build_scenarios(n_scenario_seeds, verbose=verbose)
+    game = None
+    if with_game:
+        if verbose:
+            print("  game: RL duel replays + PSRO exploitability certificate")
+        from dashboard import game as GM
+        game = GM.record_game(quick=game_quick, verbose=verbose)
     return {
         "version": 3,
         "generated": dt.date.today().isoformat(),
@@ -66,7 +73,7 @@ def build_data(n_traces: int, n_score_seeds: int, n_proof_seeds: int = 40, *,
         "presets": T.PRESETS, "tour": T.TOUR,
         "search_sizes": T.search_sizes(engine),
         "traces": traces + scenario_traces, "scoreboard": board, "proof": proof,
-        "adaptive": adaptive, "scenarios": scenario_meta,
+        "adaptive": adaptive, "scenarios": scenario_meta, "game": game,
         "build_seconds": round(time.time() - t0, 1),
     }
 
@@ -136,6 +143,7 @@ def main(argv=None):
     p.add_argument("--alloc-seeds", type=int, default=6, help="seeds per point for the allocation reward")
     p.add_argument("--scenario-seeds", type=int, default=3, help="seeds per regime-switch scenario x preset")
     p.add_argument("--quick", action="store_true", help="1 engagement each, 4-seed scoreboard")
+    p.add_argument("--no-game", action="store_true", help="skip the RL Game page recording (PSRO is slow)")
     p.add_argument("--standalone", type=Path, help="also write a single self-contained HTML page")
     p.add_argument("--reuse", action="store_true",
                    help="skip the simulation and reuse the existing data.js (for --standalone)")
@@ -152,7 +160,8 @@ def main(argv=None):
 
     data = build_data(args.traces, args.score_seeds, args.proof_seeds,
                       n_regime_seeds=args.regime_seeds, n_alloc_seeds=args.alloc_seeds,
-                      n_scenario_seeds=args.scenario_seeds, verbose=not args.quiet)
+                      n_scenario_seeds=args.scenario_seeds, with_game=not args.no_game,
+                      game_quick=args.quick, verbose=not args.quiet)
     js = to_js(data)
     DATA_JS.write_text(js, encoding="utf-8")
     n_ep = sum(r["n"] for r in data["scoreboard"]["rows"])

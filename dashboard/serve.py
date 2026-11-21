@@ -111,7 +111,24 @@ def control_step(query: dict) -> dict:
             "redteam": session.redteam_state()}
 
 
-_API = {"/api/run": run_request, "/api/control/new": control_new, "/api/control/step": control_step}
+def game_duel(query: dict) -> dict:
+    from dashboard import game as GM
+    return GM.duel_request(query)
+
+
+def game_psro_new(query: dict) -> dict:
+    from dashboard import game as GM
+    return GM.psro_new(query)
+
+
+def game_psro_step(query: dict) -> dict:
+    from dashboard import game as GM
+    return GM.psro_step(query)
+
+
+_API = {"/api/run": run_request, "/api/control/new": control_new, "/api/control/step": control_step,
+        "/api/game/duel": game_duel, "/api/game/psro/new": game_psro_new,
+        "/api/game/psro/step": game_psro_step}
 
 
 class Handler(SimpleHTTPRequestHandler):

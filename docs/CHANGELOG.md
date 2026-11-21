@@ -11,6 +11,26 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-21 — Dashboard: a "Game" page for the RL game (offline + live)
+
+Visualises the RL layer in the demo dashboard, offline from ``data.js`` and live from
+the server, the way the other pages work.
+
+- `dashboard/game.py` — records the Game block: hop-by-hop duel replays (oblivious
+  LFSR ~0.82 denied, learned hopper ~0.11, reactive LFSR, CSPRNG) and a PSRO run
+  (exploitability curve + payoff matrix). Also serves live: `run_duel_trace` for a
+  fresh duel and a `GameSession` that steps PSRO one iteration per request.
+- `dashboard/views/game.js` + CSS — two cards: a hop grid (true hop, the jammer's lit
+  tones, denied vs escaped, a scrub slider and play/pause) with a hopper switcher that
+  makes the escape visible, and the exploitability certificate (curve + meta-Nash
+  denial + CSPRNG floor, and the denial payoff heatmap with its meta-Nash support).
+  When served, a "New run" button plays a fresh live duel and "Step PSRO" trains a
+  fresh best response per click.
+- `dashboard/serve.py` — `/api/game/duel`, `/api/game/psro/new`, `/api/game/psro/step`.
+- `dashboard/build.py` — records the Game block into `data.js` (`--no-game` to skip;
+  `--quick` records a smaller one). Verified end to end: offline render (Playwright,
+  no console errors) and all three live endpoints return 200.
+
 ## 2026-11-21 — RL layer: learned adversaries, a learned jammer, and the PSRO exploitability certificate
 
 Adds `fhew/rl/` (pure numpy, no torch), implementing the reinforcement-learning

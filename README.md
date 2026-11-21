@@ -117,6 +117,7 @@ runs recorded by `python -m dashboard.build`:
 | **Decision analysis** | the same run: confidence per hypothesis over time, the search shrinking from 2,025 candidate settings to one, next-hop calls, and the standard test on the same hops |
 | **Challenge** | the audience tries to guess the next hop against OTS |
 | **Proof** | Monte-Carlo evidence over 600 runs: wrong answers and dangerous false claims vs the standard test, "unknown" on the CSPRNG, robustness to a worse sensor, textbook Berlekamp-Massey vs OTS under missed hops, sensor-aware vs naive, next-hop accuracy |
+| **The game** | the RL game (`fhew.rl`): a hop-by-hop replay of a hopper vs the OTS jammer — switch the radio to watch an *oblivious LFSR* get denied ~80% and a *learned hopper* escape to ~11% (κ pinned to 0), with play/pause/step; and the **PSRO exploitability certificate** (the curve falling toward the equilibrium, plus the denial payoff game with its meta-Nash support). Offline from `data.js`; served, a **New run** button plays a fresh live duel and **Step PSRO** trains a fresh best response per click |
 | **How it works** | the method in plain words: sense, score, decide, predict; the expert bank; the two safety rules |
 
 ```bash
@@ -499,6 +500,16 @@ from fhew.rl.psro import run_psro
 ch, sensor, effect = ChannelSet.of_size(16), SensorModel(0.95, 0.01), EffectModel(ChannelSet.of_size(16))
 res = run_psro(ch, sensor, effect, n_iters=5, include_unpredictable=False, progress=True)
 print(res.exploitability)            # the (decreasing) certificate curve
+```
+
+**See it in the dashboard.** The demo dashboard has a **The game** page that replays a
+duel hop by hop (watch an oblivious LFSR get denied ~80% and a learned hopper escape to
+~11%) next to the live exploitability certificate and the denial payoff game:
+
+```bash
+python -m dashboard.build          # records the Game block into data.js (~2 min; --no-game to skip)
+# open dashboard/index.html  ->  the "The game" page (offline), or:
+python -m dashboard.serve          # http://127.0.0.1:8050/#/game : live "New run" + "Step PSRO"
 ```
 
 ## Package layout
