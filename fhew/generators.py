@@ -67,11 +67,26 @@ def register(name: str) -> Callable[[type[Generator]], type[Generator]]:
     return deco
 
 
+#: Generators that live in optional submodules and register on first import. The
+#: lookup imports the owning module lazily so ``make_generator("rl_hopper")`` works
+#: without the caller importing ``fhew.rl`` first (and without a circular import at
+#: ``fhew.generators`` load time).
+_LAZY_MODULES = {"rl_hopper": "fhew.rl.hopper"}
+
+
 def get_generator_cls(name: str) -> type[Generator]:
     try:
         return _REGISTRY[name]
-    except KeyError as exc:  # pragma: no cover - defensive
-        raise KeyError(f"unknown generator '{name}'; registered: {sorted(_REGISTRY)}") from exc
+    except KeyError:
+        pass
+    mod = _LAZY_MODULES.get(name)
+    if mod is not None:
+        import importlib
+
+        importlib.import_module(mod)        # registers the class as a side effect
+        if name in _REGISTRY:
+            return _REGISTRY[name]
+    raise KeyError(f"unknown generator '{name}'; registered: {sorted(_REGISTRY)}")
 
 
 def make_generator(name: str, n_channels: int, rng: np.random.Generator | None = None,

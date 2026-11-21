@@ -176,6 +176,8 @@ the exp6/exp7 protocols with the same seeds.
 | `exp25_runtime` | paper §V-F | Per-slot compute time of the bank, predictor, conformal set and switch tracker (per-expert breakdown, `M` = 16 and 64) |
 | `exp26_evasion` | thesis §13 (new) | **Closed-loop jammer evasion**: fraction of hops denied, emitter oblivious vs reactive, per family and sensor; the evasion dividend and the game curve (denial & `kappa` vs aggressiveness) |
 | `exp27_deception` | thesis §13 (new) | **Counter-reconnaissance deception**: induced false-ID vs decoy persistence (`H_0` vs no-`H_0`), and tones/denial vs number of coherent decoys in the closed loop |
+| `exp28_psro_exploitability` | thesis §9 / §13 (new) | **Exploitability certificate**: a double-oracle PSRO loop grows learned hopper/jammer populations; exploitability vs iteration (how much a *fresh* best response beats the meta) falls from an exploitable seed toward the equilibrium, with the final denial payoff game and the CSPRNG boundary floor |
+| `exp29_rl_jammer` | thesis §12 (new) | **End-to-end learned jammer** (policy-gradient, no identify/predict stage): denial by jammer type per hopper family (matches the pipeline on statistical structure, loses on the LFSR, floors on CSPRNG) and the learning curves |
 
 ### Headline findings (30 seeds, `M=16`, `T=100`)
 
@@ -449,6 +451,56 @@ python -m experiments.exp26_evasion --n-seeds 20      # evasion dividend + game 
 python -m experiments.exp27_deception --n-seeds 20    # counter-ID boundary + counter-jam
 ```
 
+## Learned adversaries, a learned jammer, and the exploitability certificate (`fhew.rl`)
+
+The scripted evasion/deception closed loop above answers "can a reactive radio
+escape?"; the **RL layer** (`fhew/rl/`, pure numpy — no torch) answers the harder
+thesis questions (§9, §11, §12): can the escape be *learned*, can the jammer be
+*learned end to end*, and — the certificate a reviewer asks for — **have you only
+tested against adversaries you wrote?**
+
+- **Learned anti-jam hopper (§11).** `fhew.rl.hopper` turns the jamming feedback a
+  real radio has (own-hop denial; the sensed jammed band) into a learned hopping
+  policy: an offline PPO agent (`RLHopperAgent`) and an online bandit variant
+  (`OnlineBanditHopper`) that needs no training phase. The bandit backs a registry
+  generator, so `make_generator("rl_hopper", M)` is a first-class learned emitter.
+- **End-to-end learned jammer (§12).** `fhew.rl.jammer.RLJammerAgent` maps the sensor
+  stream straight to a multi-tone power vector with a policy gradient — no identify,
+  no explicit predictor, no calibration. It **matches the OTS pipeline where the
+  structure is first-order statistical** (a Markov hopper) but **cannot crack an
+  LFSR** without the pipeline's algebraic expert, and both floor on a keyed CSPRNG —
+  which is exactly what the pipeline's structure is worth (`exp29`). A
+  distributionally-robust (CVaR-over-adversaries) objective is included
+  (`train_jammer_robust`, `PPOConfig.cvar_alpha`); in this environment harder-to-
+  predict adversaries are also inherently less jammable, so it trades mean denial for
+  little worst-case gain — the predictability boundary bounds robustness too.
+- **Exploitability certificate via PSRO (§9 / §13).** `fhew.rl.psro` runs a
+  double-oracle loop: a payoff matrix of denial between a growing population of
+  hoppers and jammers, a fictitious-play meta-Nash, and best-response oracles that
+  train a fresh RL hopper against the jammer mixture and a fresh RL jammer against the
+  hopper mixture. **Exploitability** — how much a *fresh* best response beats the
+  current meta — is the worst-case certificate: seeded with oblivious (exploitable)
+  hoppers and the real OTS pipeline, it falls from a high value toward the
+  equilibrium as PSRO discovers the escape and its counter, while the pipeline's
+  denial against the evolving adversary drops in step (`exp28`). Both sides move from
+  history only, so the certificate is a fair game.
+
+```bash
+python -m experiments.exp28_psro_exploitability --n-iters 5   # exploitability certificate
+python -m experiments.exp29_rl_jammer --n-seeds 12            # learned jammer vs the pipeline
+python -m experiments.exp28_psro_exploitability --quick       # fast smoke run
+```
+
+```python
+from fhew import ChannelSet, SensorModel
+from fhew.allocator import EffectModel
+from fhew.rl.psro import run_psro
+
+ch, sensor, effect = ChannelSet.of_size(16), SensorModel(0.95, 0.01), EffectModel(ChannelSet.of_size(16))
+res = run_psro(ch, sensor, effect, n_iters=5, include_unpredictable=False, progress=True)
+print(res.exploitability)            # the (decreasing) certificate curve
+```
+
 ## Package layout
 
 Each concern is a single flat module in `fhew/` (the former subpackages were
@@ -487,9 +539,15 @@ fhew/
   deception.py       DeceptionEmitter: time-coherent decoy injection on the
                      observation stream (counter-ID + counter-jam) — thesis §13
   duel.py            run_duel + OTSJammer: the closed-loop OTS-vs-adversary engagement
+  rl/                reinforcement-learning layer (numpy, no torch) — thesis §9/§11/§12:
+    env.py           history-resolved engagement env + HopperPolicy/JammerPolicy
+    agents.py        linear-softmax policy, PPO-clip update, value baseline, CVaR
+    hopper.py        learned anti-jam hopper (PPO + online bandit) + rl_hopper generator
+    jammer.py        end-to-end learned jammer (PPO / CVaR / group-robust)
+    psro.py          empirical game, meta-Nash, PSRO loop, exploitability certificate
 configs/             conference.yaml, quick.yaml
-experiments/         exp1..exp21 + shared style/harness
-scripts/run_all.py   run everything
+experiments/         exp1..exp29 + shared style/harness
+scripts/run_all.py   run everything (RL exp28/exp29 are opt-in via --only)
 dashboard/           demo dashboard: recorder, proofs, build, live server, pages,
                      control.py (the Control room session + CLI)
 tests/test_fhew.py                81 tests incl. the information-parity audit
@@ -500,6 +558,7 @@ tests/test_conformal.py           10 tests for the conformal sets + identificati
 tests/test_evasion.py             13 tests for the reactive evasion transmitter
 tests/test_deception.py            9 tests for decoy injection + the counter-ID boundary
 tests/test_duel.py                 7 tests for the closed-loop engagement (fair-game checks)
+tests/test_rl.py                  17 tests for the RL env, agents, learned hopper/jammer, PSRO
 ```
 
 ## Design rules that keep it reuse-ready (paper §12)

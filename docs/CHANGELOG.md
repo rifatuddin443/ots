@@ -11,6 +11,50 @@ the README; this file is the index to it.
 
 ---
 
+## 2026-11-21 — RL layer: learned adversaries, a learned jammer, and the PSRO exploitability certificate
+
+Adds `fhew/rl/` (pure numpy, no torch), implementing the reinforcement-learning
+pieces the thesis names as contributions but the repo had only as prose (§9, §11,
+§12): a learned anti-jam hopper, an end-to-end learned jammer, and the
+exploitability certificate via a double-oracle PSRO game. All on a separate branch
+(`claude/novel-rl-psro`).
+
+- `fhew/rl/env.py` — a history-resolved two-sided engagement env with `HopperPolicy`
+  / `JammerPolicy` interfaces and adapters (`GeneratorHopper`, `OTSJammerPolicy`,
+  `ScriptedJammer`). Both sides act from history only and each sees only its legal
+  view (the hopper: jamming feedback; the jammer: the sensor stream), so the RL
+  results respect information parity like the rest of the codebase. Payoff is
+  zero-sum in denial.
+- `fhew/rl/agents.py` — dependency-free learning cores: a linear-softmax policy with
+  an analytically-differentiated **PPO-clip** update, a ridge linear value baseline,
+  and a per-episode **CVaR** tail objective. Reproducible from a seed.
+- `fhew/rl/hopper.py` — the learned anti-jam hopper: `RLHopperAgent` (offline PPO),
+  `OnlineBanditHopper` (EXP3-style, no training phase), and the `rl_hopper` registry
+  generator (lazy-registered via a hook in `generators.get_generator_cls`) so a
+  learned hopper is a first-class truth-side emitter.
+- `fhew/rl/jammer.py` — the end-to-end learned jammer `RLJammerAgent` (policy maps
+  the sensor stream straight to a multi-tone power vector through the shared
+  `EffectModel`; no identify/predict/calibrate stage), plus `train_jammer` and a
+  distributionally-robust `train_jammer_robust` (CVaR-over-adversaries).
+- `fhew/rl/psro.py` — the empirical game: `EmpiricalGame` payoff matrix, a
+  fictitious-play meta-Nash (`solve_zero_sum`), best-response oracles, and
+  `run_psro` producing the **exploitability certificate**.
+- `experiments/exp28_psro_exploitability.py`, `experiments/exp29_rl_jammer.py` —
+  two-panel figures. exp28: exploitability vs PSRO iteration falls **0.29 → ~0.01**
+  while the pipeline's denial against the discovered adversary drops **0.39 → 0.11**
+  (CSPRNG boundary floor ≈ 0.12). exp29: the learned jammer matches the pipeline on
+  statistical structure, loses on the LFSR (no algebraic expert), floors on CSPRNG,
+  and its learning curves climb on a learnable hopper and stay at the floor on CSPRNG.
+- `tests/test_rl.py` — 17 tests: env shapes/determinism/parity, PPO improves a
+  bandit, CVaR tail weighting, the learned hopper/jammer learn, `solve_zero_sum` on
+  matching-pennies and a dominant column, and a tiny end-to-end PSRO certificate.
+- Honest finding kept in view: the CVaR/robust objective exists and is tested, but in
+  this environment harder-to-predict adversaries are also inherently less jammable,
+  so it trades mean denial for little worst-case gain — the predictability boundary
+  bounds robustness too. Not promoted to a headline figure for that reason.
+- `run_all.py` leaves exp28/exp29 **opt-in** (`--only`) so the default sweep is not
+  slowed by PSRO/training; both run standalone or via `--only`.
+
 ## 2026-11-16 — Control room: evade / deceive can be toggled mid-engagement
 
 Until now the red-team levers were fixed when a session was created, so ticking

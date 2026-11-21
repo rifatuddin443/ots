@@ -38,6 +38,8 @@ from experiments import (
     exp19_sequence_coverage,
     exp20_conformal_sets,
     exp21_identification_converse,
+    exp28_psro_exploitability,
+    exp29_rl_jammer,
 )
 from experiments import common as C
 from fhew.channels import ChannelSet
@@ -66,7 +68,13 @@ EXPERIMENTS = {
     "exp19": exp19_sequence_coverage,
     "exp20": exp20_conformal_sets,
     "exp21": exp21_identification_converse,
+    "exp28": exp28_psro_exploitability,
+    "exp29": exp29_rl_jammer,
 }
+
+# RL experiments are opt-in: they train policies / run PSRO and are slow, so the
+# default sweep skips them. Run with ``--only exp28 exp29`` (or standalone).
+_RL_EXPERIMENTS = {"exp28", "exp29"}
 
 # The comprehensive full-bank experiments get their own (larger) seed floors so
 # the "huge, varied, all-types" dataset stays big even on a default run.
@@ -81,7 +89,8 @@ def main(argv=None) -> None:
     args = p.parse_args(argv)
 
     n_seeds = args.n_seeds if args.n_seeds is not None else (8 if args.quick else 30)
-    chosen = args.only or list(EXPERIMENTS)
+    # Default sweep excludes the (slow) RL experiments; request them explicitly.
+    chosen = args.only or [e for e in EXPERIMENTS if e not in _RL_EXPERIMENTS]
 
     C.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     C.FIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -183,6 +192,14 @@ def _headline(name: str, r: dict) -> dict:
             return {"efficiency_mean": r["efficiency"]["mean"],
                     "at_or_above_bound": r["efficiency"]["all_at_or_above_bound"],
                     "r2_note": "see exp11 for the linear fits"}
+        if name == "exp28":
+            return {"exploitability_start": r["exploitability"][0],
+                    "exploitability_end": r["exploitability"][-1],
+                    "meta_denial_end": r["meta_value"][-1],
+                    "csprng_floor": r["csprng_floor_vs_meta_jammer"]}
+        if name == "exp29":
+            return {g: {k: d[k]["denied_mean"] for k in ("ots_pipeline", "rl_jammer")}
+                    for g, d in r["panelA"].items()}
     except Exception as exc:  # pragma: no cover
         return {"note": f"headline extraction failed: {exc}"}
     return {}
